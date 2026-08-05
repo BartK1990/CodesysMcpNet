@@ -64,6 +64,17 @@
   }
   .field-row input[type=text] { flex: 1; min-width: 0; }
   input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  select {
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--fg);
+    font: inherit;
+  }
+  select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  select:disabled { opacity: 0.6; }
   .status { margin-top: 0.4rem; font-size: 0.85rem; color: var(--muted); }
   .status.ok { color: var(--ok); }
   .status.err { color: var(--err); }
@@ -169,6 +180,14 @@
       <div class="status" id="projectPath-status">&nbsp;</div>
     </div>
 
+    <div class="field">
+      <label for="profile">CODESYS profile</label>
+      <select id="profile" name="profile">
+        <option value="">(default profile)</option>
+      </select>
+      <div class="status" id="profile-status">&nbsp;</div>
+    </div>
+
     <button type="submit" id="save-button">Save</button>
     <div id="banner"></div>
   </form>
@@ -194,10 +213,12 @@
   const fields = {
     executablePath: document.getElementById('executablePath'),
     projectPath: document.getElementById('projectPath'),
+    profile: document.getElementById('profile'),
   };
   const statuses = {
     executablePath: document.getElementById('executablePath-status'),
     projectPath: document.getElementById('projectPath-status'),
+    profile: document.getElementById('profile-status'),
   };
 
   function showStatus(key, exists) {
@@ -225,9 +246,62 @@
       fields.projectPath.value = data.projectPath || '';
       showStatus('executablePath', data.executableExists);
       showStatus('projectPath', data.projectExists);
+      await refreshProfiles(data.profile || '');
     } catch {
       showBanner('err', 'Could not load current settings.');
     }
+  }
+
+  // Repopulates the profile dropdown from whatever CODESYS.exe is currently in the
+  // executablePath field, so the list always matches the install actually selected —
+  // not necessarily the one last saved.
+  async function refreshProfiles(selectedValue) {
+    const select = fields.profile;
+    const wanted = selectedValue !== undefined ? selectedValue : select.value;
+    const exePath = fields.executablePath.value.trim();
+
+    select.innerHTML = '';
+    select.appendChild(new Option('(default profile)', ''));
+
+    if (!exePath) {
+      statuses.profile.textContent = ' ';
+      statuses.profile.className = 'status';
+      return;
+    }
+
+    select.disabled = true;
+    statuses.profile.textContent = 'Loading profiles…';
+    statuses.profile.className = 'status';
+
+    try {
+      const res = await fetch('/profiles?' + new URLSearchParams({ executablePath: exePath }));
+      const data = await res.json();
+
+      if (!res.ok) {
+        statuses.profile.textContent = data.detail || 'Could not list profiles for this executable.';
+        statuses.profile.className = 'status err';
+      } else if (data.length === 0) {
+        statuses.profile.textContent = 'No profiles found next to this executable.';
+        statuses.profile.className = 'status err';
+      } else {
+        for (const p of data) select.appendChild(new Option(p.name, p.name));
+        statuses.profile.textContent = `${data.length} profile${data.length === 1 ? '' : 's'} found.`;
+        statuses.profile.className = 'status ok';
+      }
+    } catch {
+      statuses.profile.textContent = 'Could not reach the server.';
+      statuses.profile.className = 'status err';
+    } finally {
+      select.disabled = false;
+    }
+
+    // Keep the previously selected/saved profile even if it wasn't among the ones just
+    // discovered (e.g. the saved value predates a CODESYS reinstall) so Save doesn't
+    // silently change it out from under the user.
+    if (wanted && !Array.from(select.options).some((o) => o.value === wanted)) {
+      select.appendChild(new Option(`${wanted} (not found)`, wanted));
+    }
+    select.value = wanted || '';
   }
 
   form.addEventListener('submit', async (e) => {
@@ -242,6 +316,7 @@
         body: JSON.stringify({
           executablePath: fields.executablePath.value.trim(),
           projectPath: fields.projectPath.value.trim(),
+          profile: fields.profile.value.trim(),
         }),
       });
 
@@ -388,10 +463,13 @@
         fields[activeTarget].value = entry.fullPath;
         showStatus(activeTarget, true);
         closeBrowser();
+        if (activeTarget === 'executablePath') refreshProfiles();
       }
     });
     return row;
   }
+
+  fields.executablePath.addEventListener('change', () => refreshProfiles());
 
   document.querySelectorAll('.browse-btn').forEach((btn) => {
     btn.addEventListener('click', () => openBrowser(btn.dataset.target, btn.dataset.filter));

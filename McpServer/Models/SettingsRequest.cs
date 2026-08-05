@@ -12,4 +12,7 @@ public sealed class SettingsRequest
     /// <summary>Full path to the .project file every endpoint and MCP tool should act on.</summary>
     [Required(AllowEmptyStrings = false)]
     public string ProjectPath { get; set; } = string.Empty;
+
+    /// <summary>Profile name passed to <c>--profile</c>. Empty uses CODESYS's default profile.</summary>
+    public string Profile { get; set; } = string.Empty;
 }

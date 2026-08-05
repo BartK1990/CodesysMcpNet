@@ -32,10 +32,14 @@ public sealed class AppSettingsWriter
     public SettingsSnapshot GetCurrent()
     {
         var current = _options.CurrentValue;
-        return Describe(current.ExecutablePath, current.ProjectPath ?? string.Empty);
+        return Describe(current.ExecutablePath, current.ProjectPath ?? string.Empty, current.Profile ?? string.Empty);
     }
 
-    public async Task<SettingsSnapshot> SaveAsync(string executablePath, string projectPath, CancellationToken ct)
+    public async Task<SettingsSnapshot> SaveAsync(
+        string executablePath,
+        string projectPath,
+        string profile,
+        CancellationToken ct)
     {
         await FileLock.WaitAsync(ct);
         try
@@ -50,6 +54,7 @@ public sealed class AppSettingsWriter
 
             codesys["ExecutablePath"] = executablePath;
             codesys["ProjectPath"] = projectPath;
+            codesys["Profile"] = profile;
 
             await File.WriteAllTextAsync(_path, root.ToJsonString(WriteOptions), ct);
         }
@@ -58,7 +63,7 @@ public sealed class AppSettingsWriter
             FileLock.Release();
         }
 
-        return Describe(executablePath, projectPath);
+        return Describe(executablePath, projectPath, profile);
     }
 
     private async Task<JsonObject> ReadRootAsync(CancellationToken ct)
@@ -73,9 +78,10 @@ public sealed class AppSettingsWriter
         return JsonNode.Parse(text) as JsonObject ?? new JsonObject();
     }
 
-    private static SettingsSnapshot Describe(string executablePath, string projectPath) => new(
+    private static SettingsSnapshot Describe(string executablePath, string projectPath, string profile) => new(
         executablePath,
         projectPath,
+        profile,
         !string.IsNullOrWhiteSpace(executablePath) && File.Exists(executablePath),
         !string.IsNullOrWhiteSpace(projectPath) && File.Exists(projectPath));
 }

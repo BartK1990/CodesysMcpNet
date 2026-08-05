@@ -36,6 +36,7 @@ builder.Services.AddSingleton<PythonRunner>();
 builder.Services.AddSingleton<CodesysOperations>();
 builder.Services.AddSingleton<AppSettingsWriter>();
 builder.Services.AddSingleton<FileBrowserService>();
+builder.Services.AddSingleton<CodesysProfileService>();
 builder.Services.AddProblemDetails();
 
 builder.Services.AddEndpointsApiExplorer();
@@ -85,6 +86,7 @@ var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("McpSer
 var ops = app.Services.GetRequiredService<CodesysOperations>();
 var settings = app.Services.GetRequiredService<AppSettingsWriter>();
 var fileBrowser = app.Services.GetRequiredService<FileBrowserService>();
+var profiles = app.Services.GetRequiredService<CodesysProfileService>();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -167,7 +169,7 @@ app.MapPost("/settings", async (SettingsRequest request, CancellationToken ct) =
             if (!File.Exists(request.ProjectPath))
                 throw new CodesysValidationException($"Project file not found: {request.ProjectPath}");
 
-            var saved = await settings.SaveAsync(request.ExecutablePath, request.ProjectPath, ct);
+            var saved = await settings.SaveAsync(request.ExecutablePath, request.ProjectPath, request.Profile, ct);
             return Results.Json(saved);
         }
         catch (CodesysValidationException ex)
@@ -193,6 +195,25 @@ app.MapGet("/files", (string? path, string? filter) =>
     .WithName("BrowseFiles")
     .WithTags("Settings")
     .WithSummary("List drives (path omitted) or a directory's folders/files, for the settings page's path picker.");
+
+app.MapGet("/profiles", (string? executablePath) =>
+    {
+        try
+        {
+            var path = string.IsNullOrWhiteSpace(executablePath)
+                ? settings.GetCurrent().ExecutablePath
+                : executablePath;
+
+            return Results.Json(profiles.List(path));
+        }
+        catch (CodesysValidationException ex)
+        {
+            return ValidationProblemResult(ex);
+        }
+    })
+    .WithName("ListProfiles")
+    .WithTags("Settings")
+    .WithSummary("CODESYS version profiles installed alongside the given (or currently saved) CODESYS.exe.");
 
 // 1. Project structure -------------------------------------------------------
 app.MapGet("/structure", (CancellationToken ct) =>

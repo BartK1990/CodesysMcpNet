@@ -118,7 +118,7 @@ public sealed class PythonRunner
         _logger.LogInformation(
             "Starting {File} {Arguments}",
             startInfo.FileName,
-            string.Join(' ', startInfo.ArgumentList));
+            startInfo.ArgumentList.Count > 0 ? string.Join(' ', startInfo.ArgumentList) : startInfo.Arguments);
 
         var stdout = new StringBuilder();
         var stderr = new StringBuilder();
@@ -263,16 +263,27 @@ public sealed class PythonRunner
         {
             startInfo.FileName = Options.ExecutablePath;
 
+            // CODESYS re-tokenizes its own raw command line on whitespace instead of trusting
+            // the OS-level argv it was started with, so a value containing spaces (profile names
+            // routinely do, e.g. "CODESYS V3.5 SP21 Patch 3") must be wrapped in literal quote
+            // characters to survive as one token. Its tokenizer is naive, though: it just toggles
+            // on a bare '"', with no idea what a backslash-escaped \" means. ProcessStartInfo.
+            // ArgumentList would "helpfully" backslash-escape those quotes (correct for a normal
+            // argv-parsing child, wrong here) and CODESYS would split on the space anyway. So the
+            // whole command line is built by hand into Arguments — bypassing ArgumentList's
+            // escaping — to keep the quotes exactly as CODESYS expects them.
+            var arguments = new StringBuilder();
+
             if (!string.IsNullOrWhiteSpace(Options.Profile))
-                startInfo.ArgumentList.Add($"--profile={Options.Profile}");
+                arguments.Append("--profile=").Append(QuoteForCodesys(Options.Profile)).Append(' ');
 
             if (Options.NoUserInterface)
-                startInfo.ArgumentList.Add("--noUI");
+                arguments.Append("--noUI ");
 
             foreach (var extra in Options.AdditionalArguments)
-                startInfo.ArgumentList.Add(extra);
+                arguments.Append(extra).Append(' ');
 
-            startInfo.ArgumentList.Add($"--runscript={scriptPath}");
+            arguments.Append("--runscript=").Append(QuoteForCodesys(scriptPath)).Append(' ');
 
             // CODESYS splits the scriptargs value on whitespace, so everything the script needs
             // travels inside the single request file instead of on the command line.
@@ -280,7 +291,9 @@ public sealed class PythonRunner
             if (extraArguments is { Count: > 0 })
                 scriptArgs.AddRange(extraArguments);
 
-            startInfo.ArgumentList.Add($"--scriptargs:{string.Join(' ', scriptArgs)}");
+            arguments.Append("--scriptargs:").Append(string.Join(' ', scriptArgs));
+
+            startInfo.Arguments = arguments.ToString();
         }
         else
         {
@@ -300,6 +313,10 @@ public sealed class PythonRunner
 
         return startInfo;
     }
+
+    /// <summary>Wraps a value in the plain (unescaped) quotes CODESYS's own arg tokenizer expects.</summary>
+    private static string QuoteForCodesys(string value) =>
+        value.Contains(' ') ? $"\"{value}\"" : value;
 
     private async Task<JsonDocument?> ReadEnvelopeAsync(string resultPath, string stdout, CancellationToken ct)
     {

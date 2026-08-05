@@ -4,5 +4,6 @@ namespace McpServer.Services;
 public sealed record SettingsSnapshot(
     string ExecutablePath,
     string ProjectPath,
+    string Profile,
     bool ExecutableExists,
     bool ProjectExists);
