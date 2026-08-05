@@ -2,12 +2,9 @@ using System.ComponentModel.DataAnnotations;
 
 namespace McpServer.Models;
 
-/// <summary>POST /pou/update</summary>
+/// <summary>POST /pou/update. Acts on the project configured via the settings page.</summary>
 public sealed class PouUpdateRequest
 {
-    [Required(AllowEmptyStrings = false)]
-    public string ProjectPath { get; set; } = string.Empty;
-
     /// <summary>POU name. Use "Parent.Child" to target a method/action/property part.</summary>
     [Required(AllowEmptyStrings = false)]
     public string PouName { get; set; } = string.Empty;

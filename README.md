@@ -17,18 +17,29 @@ request into a script run — validation, script selection, payload shaping. The
 endpoints and the MCP tools are both thin adapters on top of it that differ only in how
 they report success/failure for their protocol.
 
+Every operation acts on **one** CODESYS executable and **one** project, picked on the
+[settings page](#settings-page) served at `/` — no endpoint or tool takes a project path
+as input.
+
 ## Layout
 
 ```
 /McpServer
   Program.cs                 Minimal API endpoints + MCP server registration
+  /wwwroot
+    index.html               Settings page: CODESYS.exe path + project path, served at "/"
   /Models                    Request DTOs (+ DataAnnotations validation), shared by REST and MCP
+    SettingsRequest.cs       Body of POST /settings
   /Mcp
     CodesysTools.cs          [McpServerToolType] — one MCP tool per operation, calls CodesysOperations
   /Services
     CodesysOperations.cs     Shared implementation: validation, script selection, payload shaping
     PythonRunner.cs          Process host, live log streaming, JSON envelope handling
-    CodesysOptions.cs        Configuration ("Codesys" section)
+    CodesysOptions.cs        Configuration ("Codesys" section), incl. ExecutablePath + ProjectPath
+    AppSettingsWriter.cs     Reads/writes appsettings.production.json for the settings page
+    SettingsSnapshot.cs      Response shape of GET/POST /settings
+    FileBrowserService.cs    Drive/folder/file listing backing the settings page's path picker
+    FileBrowserEntry.cs      Response shape of GET /files
     RequestValidator.cs      DataAnnotations validation, shared by REST and MCP
     CodesysValidationException.cs
     ScriptExecutionException.cs
@@ -44,26 +55,61 @@ they report success/failure for their protocol.
     enum_read.py  enum_create.py
 ```
 
-## Endpoints
+## Settings page
+
+`http://127.0.0.1:5088/` serves [wwwroot/index.html](McpServer/wwwroot/index.html): two
+fields — CODESYS.exe path and project (`.project`) file path — pre-filled from the current
+configuration, each showing whether the path actually exists on this machine. **Save**
+`POST`s to `/settings`, which validates both paths and writes them to
+`Codesys:ExecutablePath` / `Codesys:ProjectPath` in `appsettings.production.json`, created
+or updated next to the running binary. That file is loaded as a reloading configuration
+source (see [Program.cs](McpServer/Program.cs)), so a save takes effect within a couple of
+seconds — no restart needed.
+
+`appsettings.production.json` is intentionally **not** built, published, or committed: it's
+excluded from the project's `Content` items in
+[McpServer.csproj](McpServer/McpServer.csproj) and listed in `.gitignore`. It only ever
+exists as a machine-local file that [AppSettingsWriter](McpServer/Services/AppSettingsWriter.cs)
+creates the first time someone saves settings.
+
+Each field has a **Browse…** button that opens an in-page file picker instead of typing a
+path by hand. A browser page has no way to learn the real absolute path of a file chosen
+through `<input type="file">` — it only ever gets a fake one, by design — so the picker
+isn't a native OS dialog; it's a small file explorer driven by
+[FileBrowserService](McpServer/Services/FileBrowserService.cs) over `GET /files`, which
+walks the server's own filesystem (drives → folders → files, filtered to `.exe` or
+`.project`) since the server already has full local access to it anyway.
 
 | Method | Route | Body / Query |
 |---|---|---|
-| GET  | `/structure`     | `projectPath` |
-| GET  | `/pou/content`   | `projectPath`, `name` |
-| GET  | `/gvl/content`   | `projectPath`, `name` |
-| GET  | `/dut/content`   | `projectPath`, `name` |
-| GET  | `/enum/content`  | `projectPath`, `name` |
-| POST | `/pou/update`    | `{ projectPath, pouName, newCode, newDeclaration? }` |
-| POST | `/pou/create`    | `{ projectPath, name, type, language, returnType?, parentPath?, declaration?, implementation? }` |
-| POST | `/gvl/create`    | `{ projectPath, name, parentPath?, variables?: [{name,type,initialValue?,comment?}] }` |
-| POST | `/dut/create`    | `{ projectPath, name, fields: [{name,type,initialValue?,comment?}], baseType?, parentPath? }` |
-| POST | `/enum/create`   | `{ projectPath, name, values: ["Idle := 3","Busy"], baseType?, parentPath? }` |
-| POST | `/compile`       | `{ projectPath, clean?, saveAfterCompile? }` |
+| GET  | `/settings` | – → `{ executablePath, projectPath, executableExists, projectExists }` |
+| POST | `/settings` | `{ executablePath, projectPath }` → same shape, `400` if either path doesn't exist |
+| GET  | `/files` | `path?` (omit for the drive list), `filter?` (e.g. `.exe`) → `{ path, parent, entries: [{name, fullPath, isDirectory}] }` |
+
+## Endpoints
+
+Every operation below acts on the project configured on the [settings page](#settings-page)
+— none of them take a project path as input anymore.
+
+| Method | Route | Body / Query |
+|---|---|---|
+| GET  | `/structure`     | – |
+| GET  | `/pou/content`   | `name` |
+| GET  | `/gvl/content`   | `name` |
+| GET  | `/dut/content`   | `name` |
+| GET  | `/enum/content`  | `name` |
+| POST | `/pou/update`    | `{ pouName, newCode, newDeclaration? }` |
+| POST | `/pou/create`    | `{ name, type, language, returnType?, parentPath?, declaration?, implementation? }` |
+| POST | `/gvl/create`    | `{ name, parentPath?, variables?: [{name,type,initialValue?,comment?}] }` |
+| POST | `/dut/create`    | `{ name, fields: [{name,type,initialValue?,comment?}], baseType?, parentPath? }` |
+| POST | `/enum/create`   | `{ name, values: ["Idle := 3","Busy"], baseType?, parentPath? }` |
+| POST | `/compile`       | `{ clean?, saveAfterCompile? }` |
 | GET  | `/health`        | – |
 
-Status codes: `200` success, `400` invalid request or missing project file,
-`502` the script failed (the ProblemDetails body carries `script`, `exitCode`,
-`pythonTraceback` and `stderr`), `499` client disconnected mid-run.
+Status codes: `200` success, `400` invalid request, no project configured, or the
+configured project file doesn't exist, `502` the script failed (the ProblemDetails body
+carries `script`, `exitCode`, `pythonTraceback` and `stderr`), `499` client disconnected
+mid-run.
 
 `type` accepts `PRG` / `FB` / `FUN`; `language` accepts `ST`, `IL`, `LD`, `FBD`, `SFC`, `CFC`.
 
@@ -100,6 +146,7 @@ REST-specific; on the MCP side the message text carries the traceback instead).
 "Codesys": {
   "UseCodesys": true,                     // false -> run scripts under a plain interpreter
   "ExecutablePath": "C:\\Program Files\\CODESYS 3.5.20.0\\CODESYS\\Common\\CODESYS.exe",
+  "ProjectPath": null,                    // the .project every endpoint/tool acts on
   "Profile": "CODESYS V3.5 SP20 Patch 0", // must match an installed profile
   "NoUserInterface": true,
   "PythonExecutablePath": "python",       // only used when UseCodesys is false
@@ -109,6 +156,11 @@ REST-specific; on the MCP side the message text carries the traceback instead).
   "KeepTempFiles": false
 }
 ```
+
+`ExecutablePath` and `ProjectPath` are the two fields the [settings page](#settings-page)
+edits, and it writes them to `appsettings.production.json`, not this file — treat the
+values above as first-run defaults / a template for that generated file, not something you
+need to hand-edit day to day.
 
 **Set `ExecutablePath` and `Profile` to match your installation** — the exact profile
 name is what `CODESYS.exe --profile=` expects (see the CODESYS installation directory).
@@ -133,9 +185,11 @@ dotnet run --project McpServer/McpServer.csproj
 ```
 
 Listens on `http://127.0.0.1:5088` (see the `Kestrel` section in `appsettings.json`).
+Open `http://127.0.0.1:5088/` first and save a CODESYS.exe path and a project path — every
+call below fails with `400` until that's done.
 
 ```bash
-curl "http://127.0.0.1:5088/structure?projectPath=C:\demo\Plc.project"
+curl http://127.0.0.1:5088/structure
 ```
 
 ## Connecting from Claude Code, OpenCode, or any other MCP client

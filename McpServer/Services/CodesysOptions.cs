@@ -18,6 +18,13 @@ public sealed class CodesysOptions
     public string ExecutablePath { get; set; } =
         @"C:\Program Files\CODESYS 3.5.20.0\CODESYS\Common\CODESYS.exe";
 
+    /// <summary>
+    /// Full path to the currently selected .project file. Every endpoint and MCP tool operates
+    /// on this project — set it via the settings page (<c>/</c>) or <c>POST /settings</c>,
+    /// which persists it to <c>appsettings.production.json</c> next to the running binary.
+    /// </summary>
+    public string? ProjectPath { get; set; }
+
     /// <summary>Profile name passed to <c>--profile</c>. Leave empty to use the default profile.</summary>
     public string Profile { get; set; } = "CODESYS V3.5 SP20 Patch 0";
 

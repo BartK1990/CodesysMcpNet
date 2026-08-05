@@ -25,43 +25,37 @@ public sealed class CodesysTools
     }
 
     [McpServerTool(Name = "structure")]
-    [Description("Full project structure: POUs, GVLs, DUTs and ENUMs.")]
-    public Task<JsonElement> StructureAsync(
-        [Description("Absolute path to the .project file.")] string projectPath,
-        CancellationToken ct) =>
-        Run(() => _ops.GetStructureAsync(projectPath, ct));
+    [Description("Full project structure: POUs, GVLs, DUTs and ENUMs. Acts on the project configured via the settings page.")]
+    public Task<JsonElement> StructureAsync(CancellationToken ct) =>
+        Run(() => _ops.GetStructureAsync(ct));
 
     [McpServerTool(Name = "pou_content")]
-    [Description("Full ST source (declaration + implementation) of a POU.")]
+    [Description("Full ST source (declaration + implementation) of a POU. Acts on the project configured via the settings page.")]
     public Task<JsonElement> PouContentAsync(
-        [Description("Absolute path to the .project file.")] string projectPath,
         [Description("POU name. Use \"Parent.Child\" to target a method/action/property part.")] string name,
         CancellationToken ct) =>
-        Run(() => _ops.GetPouContentAsync(projectPath, name, ct));
+        Run(() => _ops.GetPouContentAsync(name, ct));
 
     [McpServerTool(Name = "gvl_content")]
-    [Description("Variables of a global variable list, with types and initial values.")]
+    [Description("Variables of a global variable list, with types and initial values. Acts on the project configured via the settings page.")]
     public Task<JsonElement> GvlContentAsync(
-        [Description("Absolute path to the .project file.")] string projectPath,
         [Description("GVL name.")] string name,
         CancellationToken ct) =>
-        Run(() => _ops.GetGvlContentAsync(projectPath, name, ct));
+        Run(() => _ops.GetGvlContentAsync(name, ct));
 
     [McpServerTool(Name = "dut_content")]
-    [Description("Fields of a structure/union DUT.")]
+    [Description("Fields of a structure/union DUT. Acts on the project configured via the settings page.")]
     public Task<JsonElement> DutContentAsync(
-        [Description("Absolute path to the .project file.")] string projectPath,
         [Description("DUT name.")] string name,
         CancellationToken ct) =>
-        Run(() => _ops.GetDutContentAsync(projectPath, name, ct));
+        Run(() => _ops.GetDutContentAsync(name, ct));
 
     [McpServerTool(Name = "enum_content")]
-    [Description("Values of an ENUM DUT.")]
+    [Description("Values of an ENUM DUT. Acts on the project configured via the settings page.")]
     public Task<JsonElement> EnumContentAsync(
-        [Description("Absolute path to the .project file.")] string projectPath,
         [Description("ENUM name.")] string name,
         CancellationToken ct) =>
-        Run(() => _ops.GetEnumContentAsync(projectPath, name, ct));
+        Run(() => _ops.GetEnumContentAsync(name, ct));
 
     [McpServerTool(Name = "pou_update")]
     [Description("Replace a POU's implementation (and optionally its declaration).")]

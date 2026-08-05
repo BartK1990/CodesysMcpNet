@@ -3,14 +3,11 @@ using System.ComponentModel.DataAnnotations;
 namespace McpServer.Models;
 
 /// <summary>
-/// POST /enum/create.
+/// POST /enum/create. Acts on the project configured via the settings page.
 /// Values accept plain names ("Idle") or explicit assignments ("Idle := 10").
 /// </summary>
 public sealed class EnumCreateRequest
 {
-    [Required(AllowEmptyStrings = false)]
-    public string ProjectPath { get; set; } = string.Empty;
-
     [Required(AllowEmptyStrings = false)]
     public string Name { get; set; } = string.Empty;
 

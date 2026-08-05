@@ -2,12 +2,9 @@ using System.ComponentModel.DataAnnotations;
 
 namespace McpServer.Models;
 
-/// <summary>POST /dut/create</summary>
+/// <summary>POST /dut/create. Acts on the project configured via the settings page.</summary>
 public sealed class DutCreateRequest
 {
-    [Required(AllowEmptyStrings = false)]
-    public string ProjectPath { get; set; } = string.Empty;
-
     [Required(AllowEmptyStrings = false)]
     public string Name { get; set; } = string.Empty;
 

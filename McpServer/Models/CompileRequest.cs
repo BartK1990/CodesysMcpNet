@@ -2,13 +2,9 @@ using System.ComponentModel.DataAnnotations;
 
 namespace McpServer.Models;
 
-/// <summary>POST /compile</summary>
+/// <summary>POST /compile. Acts on the project configured via the settings page.</summary>
 public sealed class CompileRequest
 {
-    /// <summary>Absolute path to the .project file.</summary>
-    [Required(AllowEmptyStrings = false)]
-    public string ProjectPath { get; set; } = string.Empty;
-
     /// <summary>Run a clean build before generating code.</summary>
     public bool Clean { get; set; }
 

@@ -40,17 +40,22 @@ public sealed class PythonRunner
     // CODESYS is effectively a single-instance desktop application: never run two scripts at once.
     private static readonly SemaphoreSlim Gate = new(1, 1);
 
-    private readonly CodesysOptions _options;
+    private readonly IOptionsMonitor<CodesysOptions> _optionsMonitor;
     private readonly ILogger<PythonRunner> _logger;
     private readonly string _scriptsDirectory;
 
-    public PythonRunner(IOptions<CodesysOptions> options, ILogger<PythonRunner> logger)
+    // Read fresh on every use (not just once, up front) so a setting saved through the
+    // settings page — CODESYS.exe path, project path, profile, ... — takes effect on the
+    // next script run without restarting the server.
+    private CodesysOptions Options => _optionsMonitor.CurrentValue;
+
+    public PythonRunner(IOptionsMonitor<CodesysOptions> options, ILogger<PythonRunner> logger)
     {
-        _options = options.Value;
+        _optionsMonitor = options;
         _logger = logger;
-        _scriptsDirectory = Path.IsPathRooted(_options.ScriptsDirectory)
-            ? _options.ScriptsDirectory
-            : Path.Combine(AppContext.BaseDirectory, _options.ScriptsDirectory);
+        _scriptsDirectory = Path.IsPathRooted(Options.ScriptsDirectory)
+            ? Options.ScriptsDirectory
+            : Path.Combine(AppContext.BaseDirectory, Options.ScriptsDirectory);
     }
 
     /// <summary>Runs a script with a strongly typed payload object (serialized to the request file).</summary>
@@ -92,7 +97,7 @@ public sealed class PythonRunner
         {
             Gate.Release();
 
-            if (!_options.KeepTempFiles)
+            if (!Options.KeepTempFiles)
             {
                 TryDelete(requestPath);
                 TryDelete(resultPath);
@@ -158,7 +163,7 @@ public sealed class PythonRunner
         process.BeginErrorReadLine();
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _options.TimeoutSeconds)));
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, Options.TimeoutSeconds)));
 
         try
         {
@@ -169,7 +174,7 @@ public sealed class PythonRunner
             KillProcessTree(process, scriptName);
             throw new ScriptExecutionException(
                 scriptName,
-                $"Script '{scriptName}' timed out after {_options.TimeoutSeconds}s and was terminated.",
+                $"Script '{scriptName}' timed out after {Options.TimeoutSeconds}s and was terminated.",
                 stderr: stderr.ToString());
         }
         catch (OperationCanceledException)
@@ -254,17 +259,17 @@ public sealed class PythonRunner
             WorkingDirectory = _scriptsDirectory,
         };
 
-        if (_options.UseCodesys)
+        if (Options.UseCodesys)
         {
-            startInfo.FileName = _options.ExecutablePath;
+            startInfo.FileName = Options.ExecutablePath;
 
-            if (!string.IsNullOrWhiteSpace(_options.Profile))
-                startInfo.ArgumentList.Add($"--profile={_options.Profile}");
+            if (!string.IsNullOrWhiteSpace(Options.Profile))
+                startInfo.ArgumentList.Add($"--profile={Options.Profile}");
 
-            if (_options.NoUserInterface)
+            if (Options.NoUserInterface)
                 startInfo.ArgumentList.Add("--noUI");
 
-            foreach (var extra in _options.AdditionalArguments)
+            foreach (var extra in Options.AdditionalArguments)
                 startInfo.ArgumentList.Add(extra);
 
             startInfo.ArgumentList.Add($"--runscript={scriptPath}");
@@ -279,7 +284,7 @@ public sealed class PythonRunner
         }
         else
         {
-            startInfo.FileName = _options.PythonExecutablePath;
+            startInfo.FileName = Options.PythonExecutablePath;
             startInfo.ArgumentList.Add(scriptPath);
             startInfo.ArgumentList.Add(requestPath);
 
@@ -368,7 +373,7 @@ public sealed class PythonRunner
 
     private string EnsureWorkDirectory()
     {
-        var directory = _options.WorkDirectory;
+        var directory = Options.WorkDirectory;
 
         try
         {
@@ -382,7 +387,7 @@ public sealed class PythonRunner
             directory = fallback;
         }
 
-        if (_options.UseCodesys && directory.Contains(' '))
+        if (Options.UseCodesys && directory.Contains(' '))
         {
             _logger.LogWarning(
                 "Work directory '{Directory}' contains spaces. CODESYS splits --scriptargs on whitespace, " +

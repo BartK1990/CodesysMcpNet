@@ -2,12 +2,9 @@ using System.ComponentModel.DataAnnotations;
 
 namespace McpServer.Models;
 
-/// <summary>POST /gvl/create</summary>
+/// <summary>POST /gvl/create. Acts on the project configured via the settings page.</summary>
 public sealed class GvlCreateRequest
 {
-    [Required(AllowEmptyStrings = false)]
-    public string ProjectPath { get; set; } = string.Empty;
-
     [Required(AllowEmptyStrings = false)]
     public string Name { get; set; } = string.Empty;
 

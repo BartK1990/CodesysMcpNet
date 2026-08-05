@@ -2,12 +2,9 @@ using System.ComponentModel.DataAnnotations;
 
 namespace McpServer.Models;
 
-/// <summary>POST /pou/create</summary>
+/// <summary>POST /pou/create. Acts on the project configured via the settings page.</summary>
 public sealed class PouCreateRequest
 {
-    [Required(AllowEmptyStrings = false)]
-    public string ProjectPath { get; set; } = string.Empty;
-
     [Required(AllowEmptyStrings = false)]
     public string Name { get; set; } = string.Empty;
 

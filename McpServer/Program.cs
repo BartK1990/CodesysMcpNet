@@ -7,7 +7,13 @@ using McpServer.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Host.UseWindowsService();
-builder.Configuration.AddJsonFile("appsettings.production.json", optional: true, reloadOnChange: false);
+
+// Machine-local overrides (CODESYS.exe path, selected project, ...) written by the settings
+// page at runtime. Not part of source control or the publish output — see McpServer.csproj
+// and .gitignore. Read from next to the binary regardless of the process's working directory,
+// and reloaded on change so a save takes effect without restarting the server.
+var productionSettingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.production.json");
+builder.Configuration.AddJsonFile(productionSettingsPath, optional: true, reloadOnChange: true);
 
 // ---------------------------------------------------------------------------
 // Logging: console + rolling files under ./Logs
@@ -28,6 +34,8 @@ builder.Logging.AddFile(builder.Configuration.GetSection("FileLogging"));
 builder.Services.Configure<CodesysOptions>(builder.Configuration.GetSection(CodesysOptions.SectionName));
 builder.Services.AddSingleton<PythonRunner>();
 builder.Services.AddSingleton<CodesysOperations>();
+builder.Services.AddSingleton<AppSettingsWriter>();
+builder.Services.AddSingleton<FileBrowserService>();
 builder.Services.AddProblemDetails();
 
 builder.Services.AddEndpointsApiExplorer();
@@ -60,6 +68,10 @@ var app = builder.Build();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 
+// Settings page (wwwroot/index.html) — serves it at "/" and its static assets.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 app.UseSwagger();
 app.UseSwaggerUI(options =>
 {
@@ -71,6 +83,8 @@ app.MapMcp("/mcp");
 
 var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("McpServer");
 var ops = app.Services.GetRequiredService<CodesysOperations>();
+var settings = app.Services.GetRequiredService<AppSettingsWriter>();
+var fileBrowser = app.Services.GetRequiredService<FileBrowserService>();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -89,9 +103,7 @@ async Task<IResult> RunAsync(Func<CancellationToken, Task<JsonElement>> operatio
     }
     catch (CodesysValidationException ex)
     {
-        return ex.Errors is not null
-            ? Results.ValidationProblem(ex.Errors)
-            : Problem(ex.Message, StatusCodes.Status400BadRequest);
+        return ValidationProblemResult(ex);
     }
     catch (ScriptExecutionException ex)
     {
@@ -119,6 +131,11 @@ async Task<IResult> RunAsync(Func<CancellationToken, Task<JsonElement>> operatio
 static IResult Problem(string detail, int statusCode) =>
     Results.Problem(detail: detail, statusCode: statusCode);
 
+static IResult ValidationProblemResult(CodesysValidationException ex) =>
+    ex.Errors is not null
+        ? Results.ValidationProblem(ex.Errors)
+        : Problem(ex.Message, StatusCodes.Status400BadRequest);
+
 // ---------------------------------------------------------------------------
 // Endpoints
 // ---------------------------------------------------------------------------
@@ -132,34 +149,79 @@ app.MapGet("/health", () => Results.Ok(new
 .WithTags("Health")
 .WithSummary("Liveness check.");
 
+// 0. Settings: CODESYS.exe path + selected project, edited from the page at "/" ----------
+app.MapGet("/settings", () => Results.Json(settings.GetCurrent()))
+    .WithName("GetSettings")
+    .WithTags("Settings")
+    .WithSummary("Current CODESYS executable and project paths.");
+
+app.MapPost("/settings", async (SettingsRequest request, CancellationToken ct) =>
+    {
+        try
+        {
+            RequestValidator.Validate(request);
+
+            if (!File.Exists(request.ExecutablePath))
+                throw new CodesysValidationException($"CODESYS executable not found: {request.ExecutablePath}");
+
+            if (!File.Exists(request.ProjectPath))
+                throw new CodesysValidationException($"Project file not found: {request.ProjectPath}");
+
+            var saved = await settings.SaveAsync(request.ExecutablePath, request.ProjectPath, ct);
+            return Results.Json(saved);
+        }
+        catch (CodesysValidationException ex)
+        {
+            return ValidationProblemResult(ex);
+        }
+    })
+    .WithName("SaveSettings")
+    .WithTags("Settings")
+    .WithSummary("Create or update appsettings.production.json with the CODESYS executable and project paths.");
+
+app.MapGet("/files", (string? path, string? filter) =>
+    {
+        try
+        {
+            return Results.Json(fileBrowser.List(path, filter));
+        }
+        catch (CodesysValidationException ex)
+        {
+            return ValidationProblemResult(ex);
+        }
+    })
+    .WithName("BrowseFiles")
+    .WithTags("Settings")
+    .WithSummary("List drives (path omitted) or a directory's folders/files, for the settings page's path picker.");
+
 // 1. Project structure -------------------------------------------------------
-app.MapGet("/structure", (string projectPath, CancellationToken ct) =>
-        RunAsync(ct2 => ops.GetStructureAsync(projectPath, ct2), ct))
+app.MapGet("/structure", (CancellationToken ct) =>
+        RunAsync(ct2 => ops.GetStructureAsync(ct2), ct))
     .WithName("GetStructure")
     .WithTags("Structure")
     .WithSummary("Full project structure: POUs, GVLs, DUTs and ENUMs.");
 
 // 2. Read object contents ----------------------------------------------------
-app.MapGet("/pou/content", (string projectPath, string name, CancellationToken ct) =>
-        RunAsync(ct2 => ops.GetPouContentAsync(projectPath, name, ct2), ct))
+app.MapGet("/pou/content", (string name, CancellationToken ct) =>
+        RunAsync(ct2 => ops.GetPouContentAsync(name, ct2), ct))
     .WithName("GetPouContent")
     .WithTags("Read")
     .WithSummary("Full ST source (declaration + implementation) of a POU.");
 
-app.MapGet("/gvl/content", (string projectPath, string name, CancellationToken ct) =>
-        RunAsync(ct2 => ops.GetGvlContentAsync(projectPath, name, ct2), ct))
+app.MapGet("/gvl/content", (string name, CancellationToken ct) =>
+        RunAsync(ct2 => ops.GetGvlContentAsync(name, ct2), ct))
     .WithName("GetGvlContent")
     .WithTags("Read")
     .WithSummary("Variables of a global variable list, with types and initial values.");
 
-app.MapGet("/dut/content", (string projectPath, string name, CancellationToken ct) =>
-        RunAsync(ct2 => ops.GetDutContentAsync(projectPath, name, ct2), ct))
+app.MapGet("/dut/content", (string name, CancellationToken ct) =>
+        RunAsync(ct2 => ops.GetDutContentAsync(name, ct2), ct))
     .WithName("GetDutContent")
     .WithTags("Read")
     .WithSummary("Fields of a structure/union DUT.");
 
-app.MapGet("/enum/content", (string projectPath, string name, CancellationToken ct) =>
-        RunAsync(ct2 => ops.GetEnumContentAsync(projectPath, name, ct2), ct))
+app.MapGet("/enum/content", (string name, CancellationToken ct) =>
+        RunAsync(ct2 => ops.GetEnumContentAsync(name, ct2), ct))
     .WithName("GetEnumContent")
     .WithTags("Read")
     .WithSummary("Values of an ENUM DUT.");
