@@ -991,20 +991,30 @@ class Project(object):
                 self._walk(child, path)
                 continue
 
-            if _flag(child, "is_dut"):
-                parsed = parse_type_declaration(_textual(child, "textual_declaration"))
-                if parsed.get("kind") == "enum":
-                    self._enums.append(Enum(child, path, parsed))
-                else:
-                    self._duts.append(Dut(child, path, parsed))
-                continue
+            # This engine version exposes no is_pou / is_dut / is_gvl flags (confirmed:
+            # every ScriptObject only has is_folder and is_application; everything else
+            # comes back "<missing>"). The only reliable, version-tolerant signal left is
+            # the textual declaration itself, so classify by parsing its header instead -
+            # a "TYPE Name :" header means DUT/ENUM, a PROGRAM/FUNCTION_BLOCK/FUNCTION/
+            # INTERFACE header means POU, and a bare VAR_GLOBAL block (no header at all,
+            # constant/persistent/retain qualifiers included) means GVL.
+            declaration = _textual(child, "textual_declaration")
+            if declaration is not None:
+                masked = _mask(declaration)[0]
 
-            if _flag(child, "is_gvl", "is_global_variable_list", "is_globalvariablelist"):
+                if _TYPE_HEADER_RE.search(masked):
+                    parsed = parse_type_declaration(declaration)
+                    if parsed.get("kind") == "enum":
+                        self._enums.append(Enum(child, path, parsed))
+                    else:
+                        self._duts.append(Dut(child, path, parsed))
+                    continue
+
+                if _POU_KIND_RE.search(masked):
+                    self._pous.append(Pou(child, path))
+                    continue
+
                 self._gvls.append(Gvl(child, path))
-                continue
-
-            if _flag(child, "is_pou"):
-                self._pous.append(Pou(child, path))
                 continue
 
             # Devices, task configurations, library managers, visualizations, ...
