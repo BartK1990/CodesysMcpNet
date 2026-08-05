@@ -1,6 +1,6 @@
-using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using McpServer.Logging;
+using McpServer.Mcp;
 using McpServer.Models;
 using McpServer.Services;
 
@@ -27,6 +27,7 @@ builder.Logging.AddFile(builder.Configuration.GetSection("FileLogging"));
 // ---------------------------------------------------------------------------
 builder.Services.Configure<CodesysOptions>(builder.Configuration.GetSection(CodesysOptions.SectionName));
 builder.Services.AddSingleton<PythonRunner>();
+builder.Services.AddSingleton<CodesysOperations>();
 builder.Services.AddProblemDetails();
 
 builder.Services.AddEndpointsApiExplorer();
@@ -47,6 +48,13 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.WriteIndented = true;
 });
 
+// Same CodesysOperations the REST endpoints below use, exposed as MCP tools over
+// Streamable HTTP at /mcp. See Mcp/CodesysTools.cs.
+builder.Services
+    .AddMcpServer()
+    .WithHttpTransport()
+    .WithTools<CodesysTools>();
+
 var app = builder.Build();
 
 app.UseExceptionHandler();
@@ -59,26 +67,31 @@ app.UseSwaggerUI(options =>
     options.RoutePrefix = "swagger";
 });
 
+app.MapMcp("/mcp");
+
 var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("McpServer");
-var runner = app.Services.GetRequiredService<PythonRunner>();
+var ops = app.Services.GetRequiredService<CodesysOperations>();
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Runs a script and maps failures onto ProblemDetails responses.
-async Task<IResult> RunScriptAsync(string script, object payload, string? projectPath, CancellationToken ct)
+// Runs a CodesysOperations call and maps its exceptions onto ProblemDetails responses.
+// CodesysOperations (Services/CodesysOperations.cs) is the shared implementation behind both
+// this REST API and the MCP tools in Mcp/CodesysTools.cs; this helper only adds the
+// REST-specific error shape on top.
+async Task<IResult> RunAsync(Func<CancellationToken, Task<JsonElement>> operation, CancellationToken ct)
 {
-    if (string.IsNullOrWhiteSpace(projectPath))
-        return Problem("projectPath is required.", StatusCodes.Status400BadRequest);
-
-    if (!File.Exists(projectPath))
-        return Problem($"Project file not found: {projectPath}", StatusCodes.Status400BadRequest);
-
     try
     {
-        var result = await runner.ExecuteAsync(script, payload, ct);
-        return Results.Json(result.Data, statusCode: StatusCodes.Status200OK);
+        var data = await operation(ct);
+        return Results.Json(data, statusCode: StatusCodes.Status200OK);
+    }
+    catch (CodesysValidationException ex)
+    {
+        return ex.Errors is not null
+            ? Results.ValidationProblem(ex.Errors)
+            : Problem(ex.Message, StatusCodes.Status400BadRequest);
     }
     catch (ScriptExecutionException ex)
     {
@@ -106,27 +119,6 @@ async Task<IResult> RunScriptAsync(string script, object payload, string? projec
 static IResult Problem(string detail, int statusCode) =>
     Results.Problem(detail: detail, statusCode: statusCode);
 
-// DataAnnotations validation for POST bodies.
-static bool TryValidate(object model, out IResult? failure)
-{
-    var context = new ValidationContext(model);
-    var results = new List<ValidationResult>();
-
-    if (Validator.TryValidateObject(model, context, results, validateAllProperties: true))
-    {
-        failure = null;
-        return true;
-    }
-
-    var errors = results
-        .SelectMany(r => r.MemberNames.DefaultIfEmpty(string.Empty), (r, member) => (member, r.ErrorMessage))
-        .GroupBy(x => string.IsNullOrEmpty(x.member) ? "request" : x.member)
-        .ToDictionary(g => g.Key, g => g.Select(x => x.ErrorMessage ?? "Invalid value").ToArray());
-
-    failure = Results.ValidationProblem(errors);
-    return false;
-}
-
 // ---------------------------------------------------------------------------
 // Endpoints
 // ---------------------------------------------------------------------------
@@ -142,182 +134,77 @@ app.MapGet("/health", () => Results.Ok(new
 
 // 1. Project structure -------------------------------------------------------
 app.MapGet("/structure", (string projectPath, CancellationToken ct) =>
-        RunScriptAsync("structure.py", new { projectPath }, projectPath, ct))
+        RunAsync(ct2 => ops.GetStructureAsync(projectPath, ct2), ct))
     .WithName("GetStructure")
     .WithTags("Structure")
     .WithSummary("Full project structure: POUs, GVLs, DUTs and ENUMs.");
 
 // 2. Read object contents ----------------------------------------------------
 app.MapGet("/pou/content", (string projectPath, string name, CancellationToken ct) =>
-        RunScriptAsync("pou_read.py", new { projectPath, name }, projectPath, ct))
+        RunAsync(ct2 => ops.GetPouContentAsync(projectPath, name, ct2), ct))
     .WithName("GetPouContent")
     .WithTags("Read")
     .WithSummary("Full ST source (declaration + implementation) of a POU.");
 
 app.MapGet("/gvl/content", (string projectPath, string name, CancellationToken ct) =>
-        RunScriptAsync("gvl_read.py", new { projectPath, name }, projectPath, ct))
+        RunAsync(ct2 => ops.GetGvlContentAsync(projectPath, name, ct2), ct))
     .WithName("GetGvlContent")
     .WithTags("Read")
     .WithSummary("Variables of a global variable list, with types and initial values.");
 
 app.MapGet("/dut/content", (string projectPath, string name, CancellationToken ct) =>
-        RunScriptAsync("dut_read.py", new { projectPath, name }, projectPath, ct))
+        RunAsync(ct2 => ops.GetDutContentAsync(projectPath, name, ct2), ct))
     .WithName("GetDutContent")
     .WithTags("Read")
     .WithSummary("Fields of a structure/union DUT.");
 
 app.MapGet("/enum/content", (string projectPath, string name, CancellationToken ct) =>
-        RunScriptAsync("enum_read.py", new { projectPath, name }, projectPath, ct))
+        RunAsync(ct2 => ops.GetEnumContentAsync(projectPath, name, ct2), ct))
     .WithName("GetEnumContent")
     .WithTags("Read")
     .WithSummary("Values of an ENUM DUT.");
 
 // 3. Update POU code ---------------------------------------------------------
-app.MapPost("/pou/update", async (PouUpdateRequest request, CancellationToken ct) =>
-    {
-        if (!TryValidate(request, out var failure))
-            return failure!;
-
-        return await RunScriptAsync(
-            "pou_update.py",
-            new
-            {
-                projectPath = request.ProjectPath,
-                name = request.PouName,
-                implementation = request.NewCode,
-                declaration = request.NewDeclaration,
-            },
-            request.ProjectPath,
-            ct);
-    })
+app.MapPost("/pou/update", (PouUpdateRequest request, CancellationToken ct) =>
+        RunAsync(ct2 => ops.UpdatePouAsync(request, ct2), ct))
     .WithName("UpdatePou")
     .WithTags("Update")
     .WithSummary("Replace a POU's implementation (and optionally its declaration).");
 
 // 4. Create new objects ------------------------------------------------------
-app.MapPost("/pou/create", async (PouCreateRequest request, CancellationToken ct) =>
-    {
-        if (!TryValidate(request, out var failure))
-            return failure!;
-
-        return await RunScriptAsync(
-            "pou_create.py",
-            new
-            {
-                projectPath = request.ProjectPath,
-                name = request.Name,
-                type = request.Type,
-                language = request.Language,
-                returnType = request.ReturnType,
-                parentPath = request.ParentPath,
-                implementation = request.Implementation,
-                declaration = request.Declaration,
-            },
-            request.ProjectPath,
-            ct);
-    })
+app.MapPost("/pou/create", (PouCreateRequest request, CancellationToken ct) =>
+        RunAsync(ct2 => ops.CreatePouAsync(request, ct2), ct))
     .WithName("CreatePou")
     .WithTags("Create")
     .WithSummary("Create a new POU (PRG, FB or FUN).");
 
-app.MapPost("/gvl/create", async (GvlCreateRequest request, CancellationToken ct) =>
-    {
-        if (!TryValidate(request, out var failure))
-            return failure!;
-
-        return await RunScriptAsync(
-            "gvl_create.py",
-            new
-            {
-                projectPath = request.ProjectPath,
-                name = request.Name,
-                parentPath = request.ParentPath,
-                variables = request.Variables?.Select(v => new
-                {
-                    name = v.Name,
-                    type = v.Type,
-                    initialValue = v.InitialValue,
-                    comment = v.Comment,
-                }),
-            },
-            request.ProjectPath,
-            ct);
-    })
+app.MapPost("/gvl/create", (GvlCreateRequest request, CancellationToken ct) =>
+        RunAsync(ct2 => ops.CreateGvlAsync(request, ct2), ct))
     .WithName("CreateGvl")
     .WithTags("Create")
     .WithSummary("Create a new global variable list, optionally with initial variables.");
 
-app.MapPost("/dut/create", async (DutCreateRequest request, CancellationToken ct) =>
-    {
-        if (!TryValidate(request, out var failure))
-            return failure!;
-
-        return await RunScriptAsync(
-            "dut_create.py",
-            new
-            {
-                projectPath = request.ProjectPath,
-                name = request.Name,
-                baseType = request.BaseType,
-                parentPath = request.ParentPath,
-                fields = request.Fields.Select(f => new
-                {
-                    name = f.Name,
-                    type = f.Type,
-                    initialValue = f.InitialValue,
-                    comment = f.Comment,
-                }),
-            },
-            request.ProjectPath,
-            ct);
-    })
+app.MapPost("/dut/create", (DutCreateRequest request, CancellationToken ct) =>
+        RunAsync(ct2 => ops.CreateDutAsync(request, ct2), ct))
     .WithName("CreateDut")
     .WithTags("Create")
     .WithSummary("Create a new STRUCT data unit type with the given fields.");
 
-app.MapPost("/enum/create", async (EnumCreateRequest request, CancellationToken ct) =>
-    {
-        if (!TryValidate(request, out var failure))
-            return failure!;
-
-        return await RunScriptAsync(
-            "enum_create.py",
-            new
-            {
-                projectPath = request.ProjectPath,
-                name = request.Name,
-                values = request.Values,
-                baseType = request.BaseType,
-                parentPath = request.ParentPath,
-            },
-            request.ProjectPath,
-            ct);
-    })
+app.MapPost("/enum/create", (EnumCreateRequest request, CancellationToken ct) =>
+        RunAsync(ct2 => ops.CreateEnumAsync(request, ct2), ct))
     .WithName("CreateEnum")
     .WithTags("Create")
     .WithSummary("Create a new ENUM data unit type with the given values.");
 
 // 5. Compile -----------------------------------------------------------------
-app.MapPost("/compile", async (CompileRequest request, CancellationToken ct) =>
-    {
-        if (!TryValidate(request, out var failure))
-            return failure!;
-
-        return await RunScriptAsync(
-            "compile.py",
-            new
-            {
-                projectPath = request.ProjectPath,
-                clean = request.Clean,
-                save = request.SaveAfterCompile,
-            },
-            request.ProjectPath,
-            ct);
-    })
+app.MapPost("/compile", (CompileRequest request, CancellationToken ct) =>
+        RunAsync(ct2 => ops.CompileAsync(request, ct2), ct))
     .WithName("Compile")
     .WithTags("Build")
     .WithSummary("Generate code for every application in the project and return the compiler verdict.");
 
-log.LogInformation("CODESYS MCP server starting. Scripts are executed serially against a single CODESYS instance.");
+log.LogInformation(
+    "CODESYS MCP server starting. REST on this Kestrel instance, MCP tools at /mcp. " +
+    "Scripts are executed serially against a single CODESYS instance.");
 
 app.Run();

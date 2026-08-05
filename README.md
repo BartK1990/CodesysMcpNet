@@ -1,25 +1,36 @@
 # CodesysMcpNet
 
-A local HTTP API (ASP.NET Core 10) that manipulates a CODESYS V3 project by executing
-Python scripts against the **official CODESYS Scripting Engine**. No unofficial MCP
-libraries are involved — the server is a thin, well-logged process host in front of
-`CODESYS.exe --runscript`.
+An ASP.NET Core 10 host that manipulates a CODESYS V3 project by executing Python scripts
+against the **official CODESYS Scripting Engine**, exposed both as a plain REST/JSON API
+and as a native [MCP](https://modelcontextprotocol.io) server — the same operations, on
+the same Kestrel instance, over two protocols.
 
 ```
-HTTP request ──► Minimal API endpoint ──► PythonRunner ──► CODESYS.exe --runscript=<script>.py
-                                                                  │
-                        JSON envelope ◄── result file + stdout ◄──┘
+REST request  ──► Program.cs endpoint     ──┐
+MCP tool call ──► Mcp/CodesysTools.cs /mcp ──┴─► CodesysOperations ──► PythonRunner ──► CODESYS.exe --runscript=<script>.py
+                                                                                                    │
+                                    JSON envelope ◄── result file + stdout ◄───────────────────────┘
 ```
+
+`CodesysOperations` (see [Layout](#layout)) is the only place that knows how to turn a
+request into a script run — validation, script selection, payload shaping. The REST
+endpoints and the MCP tools are both thin adapters on top of it that differ only in how
+they report success/failure for their protocol.
 
 ## Layout
 
 ```
 /McpServer
-  Program.cs                 Minimal API endpoints
-  /Models                    Request DTOs (+ DataAnnotations validation)
+  Program.cs                 Minimal API endpoints + MCP server registration
+  /Models                    Request DTOs (+ DataAnnotations validation), shared by REST and MCP
+  /Mcp
+    CodesysTools.cs          [McpServerToolType] — one MCP tool per operation, calls CodesysOperations
   /Services
+    CodesysOperations.cs     Shared implementation: validation, script selection, payload shaping
     PythonRunner.cs          Process host, live log streaming, JSON envelope handling
     CodesysOptions.cs        Configuration ("Codesys" section)
+    RequestValidator.cs      DataAnnotations validation, shared by REST and MCP
+    CodesysValidationException.cs
     ScriptExecutionException.cs
   /Logging                   Dependency-free rolling file logger
   /Scripts
@@ -55,6 +66,33 @@ Status codes: `200` success, `400` invalid request or missing project file,
 `pythonTraceback` and `stderr`), `499` client disconnected mid-run.
 
 `type` accepts `PRG` / `FB` / `FUN`; `language` accepts `ST`, `IL`, `LD`, `FBD`, `SFC`, `CFC`.
+
+## MCP tools
+
+The same eleven operations are exposed as MCP tools at `POST /mcp` (Streamable HTTP
+transport), registered in [Program.cs](McpServer/Program.cs) via
+`AddMcpServer().WithHttpTransport().WithTools<CodesysTools>()` and implemented in
+[Mcp/CodesysTools.cs](McpServer/Mcp/CodesysTools.cs). Tool names and inputs mirror the
+REST routes:
+
+| Tool | Equivalent REST route |
+|---|---|
+| `structure` | `GET /structure` |
+| `pou_content` | `GET /pou/content` |
+| `gvl_content` | `GET /gvl/content` |
+| `dut_content` | `GET /dut/content` |
+| `enum_content` | `GET /enum/content` |
+| `pou_update` | `POST /pou/update` |
+| `pou_create` | `POST /pou/create` |
+| `gvl_create` | `POST /gvl/create` |
+| `dut_create` | `POST /dut/create` |
+| `enum_create` | `POST /enum/create` |
+| `compile` | `POST /compile` |
+
+A failed validation or script run raises `McpException`, so its message reaches the
+calling model as a tool error — the same detail the REST layer puts in a ProblemDetails
+body, just without the HTTP status code or `exitCode`/`stderr` extensions (those are
+REST-specific; on the MCP side the message text carries the traceback instead).
 
 ## Configuration (`appsettings.json`)
 
@@ -99,6 +137,49 @@ Listens on `http://127.0.0.1:5088` (see the `Kestrel` section in `appsettings.js
 ```bash
 curl "http://127.0.0.1:5088/structure?projectPath=C:\demo\Plc.project"
 ```
+
+## Connecting from Claude Code, OpenCode, or any other MCP client
+
+With the server running, point an MCP client at `http://127.0.0.1:5088/mcp` using the
+HTTP (Streamable HTTP) transport — no bridge or adapter needed, it's a real MCP endpoint.
+
+**Claude Code**:
+
+```bash
+claude mcp add --transport http codesys http://127.0.0.1:5088/mcp
+```
+
+or, for a project-scoped, team-shared entry, add it to `.mcp.json` at the repo root:
+
+```json
+{
+  "mcpServers": {
+    "codesys": {
+      "type": "http",
+      "url": "http://127.0.0.1:5088/mcp"
+    }
+  }
+}
+```
+
+**OpenCode** (`opencode.json` / `opencode.jsonc`):
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "codesys": {
+      "type": "remote",
+      "url": "http://127.0.0.1:5088/mcp",
+      "enabled": true
+    }
+  }
+}
+```
+
+Both clients will then list `structure`, `pou_content`, `pou_update`, `compile`, … as
+ordinary tools (see [MCP tools](#mcp-tools)). The server must already be running — start
+it as described under [Running](#running) before adding it to either client.
 
 ## The scripting facade
 
