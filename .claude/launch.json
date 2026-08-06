@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "codesys-mcp-web",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "CodesysMcpServer.Web", "--launch-profile", "CodesysMcpServer"],
+      "port": 5088
+    }
+  ]
+}

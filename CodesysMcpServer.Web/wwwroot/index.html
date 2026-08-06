@@ -98,6 +98,51 @@
     padding: 0.55rem 1rem;
     font-weight: 500;
   }
+  #structure-button { margin-left: 0.6rem; }
+
+  /* Project structure panel */
+  #structure-panel { display: none; margin-top: 1.5rem; }
+  #structure-panel.open { display: block; }
+  #structure-tree {
+    margin-top: 0.6rem;
+    max-height: 420px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.9rem;
+  }
+  .struct-empty { color: var(--muted); padding: 0.75rem 0; text-align: center; font-size: 0.9rem; }
+  #structure-tree ul { list-style: none; margin: 0; padding-left: 1.15rem; }
+  #structure-tree > ul { padding-left: 0; }
+  #structure-tree li { margin: 0.1rem 0; }
+  #structure-tree details > summary {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.15rem 0;
+    list-style: none;
+  }
+  #structure-tree summary::-webkit-details-marker { display: none; }
+  #structure-tree summary::before {
+    content: '\25b8';
+    display: inline-block;
+    width: 1em;
+    flex: none;
+    color: var(--muted);
+    transition: transform 0.1s;
+  }
+  #structure-tree details[open] > summary::before { transform: rotate(90deg); }
+  .struct-leaf {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.15rem 0;
+  }
+  #structure-tree .icon { width: 1.1em; text-align: center; flex: none; }
+  #structure-tree .name { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+  #structure-tree .meta { color: var(--muted); font-size: 0.8rem; }
   #banner {
     display: none;
     margin-top: 1.25rem;
@@ -190,8 +235,14 @@
     </div>
 
     <button type="submit" id="save-button">Save</button>
+    <button type="button" class="btn-secondary" id="structure-button">View project structure</button>
     <div id="banner"></div>
   </form>
+
+  <div id="structure-panel">
+    <div class="status" id="structure-status">&nbsp;</div>
+    <div id="structure-tree"></div>
+  </div>
 </main>
 
 <div class="modal-backdrop" id="browser-backdrop">
@@ -341,6 +392,159 @@
   });
 
   loadCurrent();
+
+  // ---------------------------------------------------------------------
+  // Project structure panel: GET /structure, rendered as grouped lists of
+  // POUs / GVLs / DUTs / ENUMs / folders.
+  // ---------------------------------------------------------------------
+  const structureButton = document.getElementById('structure-button');
+  const structurePanel = document.getElementById('structure-panel');
+  const structureStatus = document.getElementById('structure-status');
+  const structureTree = document.getElementById('structure-tree');
+
+  // Every POU/GVL/DUT/ENUM/folder path is slash-delimited (e.g. "Application/Logic/Main"),
+  // matching the CODESYS project tree exactly. Build a real nested tree from those paths
+  // instead of flat per-type lists.
+  const TYPE_INFO = {
+    pou: { icon: '🧩', meta: (i) => [i.type, i.language].filter(Boolean).join(' · ') },
+    gvl: { icon: '🌐', meta: (i) => `${i.variableCount ?? 0} variables` },
+    dut: { icon: '🧱', meta: (i) => [i.kind, i.baseType].filter(Boolean).join(' · ') },
+    enum: { icon: '🔢', meta: (i) => `${i.valueCount ?? 0} values` },
+  };
+
+  function makeNode(name) {
+    return { name, kind: 'folder', children: new Map(), item: null };
+  }
+
+  function ensurePath(root, path) {
+    let node = root;
+    for (const segment of path.split('/')) {
+      if (!node.children.has(segment)) node.children.set(segment, makeNode(segment));
+      node = node.children.get(segment);
+    }
+    return node;
+  }
+
+  function buildTree(data) {
+    const root = makeNode('');
+    for (const path of data.folders || []) ensurePath(root, path).kind = 'folder';
+    for (const path of data.applications || []) ensurePath(root, path).kind = 'application';
+
+    for (const key of ['pous', 'gvls', 'duts', 'enums']) {
+      const kind = key.slice(0, -1);
+      for (const item of data[key] || []) {
+        const node = ensurePath(root, item.path || item.name);
+        node.kind = kind;
+        node.item = item;
+      }
+    }
+    return root;
+  }
+
+  function isContainer(node) {
+    return node.children.size > 0 || node.kind === 'folder' || node.kind === 'application';
+  }
+
+  function renderChildren(node) {
+    const ul = document.createElement('ul');
+    const entries = Array.from(node.children.values()).sort((a, b) => {
+      const ac = isContainer(a), bc = isContainer(b);
+      return ac === bc ? a.name.localeCompare(b.name) : (ac ? -1 : 1);
+    });
+    for (const child of entries) ul.appendChild(renderNode(child));
+    return ul;
+  }
+
+  function renderNode(node) {
+    const li = document.createElement('li');
+
+    if (isContainer(node)) {
+      const details = document.createElement('details');
+      details.open = true;
+
+      const summary = document.createElement('summary');
+      const icon = document.createElement('span');
+      icon.className = 'icon';
+      icon.textContent = node.kind === 'application' ? '📦' : '📁';
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = node.name;
+      summary.append(icon, name);
+
+      details.append(summary, renderChildren(node));
+      li.appendChild(details);
+    } else {
+      li.className = 'struct-leaf';
+      const info = TYPE_INFO[node.kind] || { icon: '📄', meta: () => '' };
+
+      const icon = document.createElement('span');
+      icon.className = 'icon';
+      icon.textContent = info.icon;
+
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = node.name;
+
+      li.append(icon, name);
+
+      const metaText = node.item ? info.meta(node.item) : '';
+      if (metaText) {
+        const meta = document.createElement('span');
+        meta.className = 'meta';
+        meta.textContent = metaText;
+        li.appendChild(meta);
+      }
+    }
+
+    return li;
+  }
+
+  function renderStructure(data) {
+    structureTree.innerHTML = '';
+    const root = buildTree(data);
+
+    if (root.children.size === 0) {
+      structureTree.appendChild(Object.assign(document.createElement('div'), {
+        className: 'struct-empty',
+        textContent: 'No objects found in this project.',
+      }));
+      return;
+    }
+
+    structureTree.appendChild(renderChildren(root));
+  }
+
+  async function loadStructure() {
+    structurePanel.classList.add('open');
+    structureButton.disabled = true;
+    structureStatus.textContent = 'Loading project structure…';
+    structureStatus.className = 'status';
+    structureTree.innerHTML = '';
+
+    try {
+      const res = await fetch('/structure');
+      const data = await res.json();
+
+      if (!res.ok) {
+        structureStatus.textContent = data.detail || 'Could not load the project structure.';
+        structureStatus.className = 'status err';
+        return;
+      }
+
+      const counts = data.counts || {};
+      const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+      structureStatus.textContent = `${total} object${total === 1 ? '' : 's'} in ${data.projectPath || 'project'}.`;
+      structureStatus.className = 'status ok';
+      renderStructure(data);
+    } catch {
+      structureStatus.textContent = 'Could not reach the server.';
+      structureStatus.className = 'status err';
+    } finally {
+      structureButton.disabled = false;
+    }
+  }
+
+  structureButton.addEventListener('click', loadStructure);
 
   // ---------------------------------------------------------------------
   // Browse… file picker. There is no way for a web page to learn the real
