@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CODESYS MCP Server — Settings</title>
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1b1f24;
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #d7dbe0;
+    --muted: #6a7480;
+    --accent: #2563eb;
+    --ok: #1a7f37;
+    --err: #c92a2a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #e6e8eb;
+      --bg: #16181d;
+      --card: #1e2127;
+      --border: #33373f;
+      --muted: #9aa4b2;
+      --accent: #5b8def;
+      --ok: #3fb950;
+      --err: #ff6b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 4rem 1.5rem;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main {
+    width: 100%;
+    max-width: 640px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+  }
+  h1 { font-size: 1.25rem; margin: 0 0 0.25rem; }
+  p.sub { color: var(--muted); margin: 0 0 1.75rem; }
+  label { display: block; font-weight: 600; margin-bottom: 0.35rem; }
+  .field { margin-bottom: 1.25rem; }
+  .field-row { display: flex; gap: 0.5rem; }
+  input[type=text] {
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+  }
+  .field-row input[type=text] { flex: 1; min-width: 0; }
+  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  select {
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--fg);
+    font: inherit;
+  }
+  select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  select:disabled { opacity: 0.6; }
+  .status { margin-top: 0.4rem; font-size: 0.85rem; color: var(--muted); }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); }
+  button {
+    padding: 0.6rem 1.3rem;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent);
+    color: white;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.6; cursor: default; }
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--fg);
+    white-space: nowrap;
+    padding: 0.55rem 1rem;
+    font-weight: 500;
+  }
+  #banner {
+    display: none;
+    margin-top: 1.25rem;
+    padding: 0.7rem 0.9rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    white-space: pre-wrap;
+  }
+  #banner.ok { display: block; background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+  #banner.err { display: block; background: color-mix(in srgb, var(--err) 15%, transparent); color: var(--err); }
+
+  /* File picker modal */
+  .modal-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    z-index: 10;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    width: 100%;
+    max-width: 560px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .modal-header { padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); }
+  .modal-title { font-weight: 600; margin: 0 0 0.4rem; }
+  .breadcrumb { font-size: 0.85rem; color: var(--muted); word-break: break-all; }
+  .modal-list { overflow-y: auto; flex: 1; padding: 0.4rem 0; }
+  .modal-entry {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 1.25rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  .modal-entry:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .modal-entry.up { color: var(--muted); }
+  .modal-entry .icon { width: 1.1em; text-align: center; }
+  .modal-empty { padding: 1.5rem; color: var(--muted); text-align: center; font-size: 0.9rem; }
+  .modal-footer { padding: 0.75rem 1.25rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; }
+</style>
+</head>
+<body>
+<main>
+  <h1>CODESYS MCP Server</h1>
+  <p class="sub">
+    The executable and project below are what every REST endpoint and MCP tool acts on.
+    Saving writes <code>appsettings.production.json</code> next to the server and takes
+    effect immediately.
+  </p>
+
+  <form id="settings-form">
+    <div class="field">
+      <label for="executablePath">CODESYS.exe path</label>
+      <div class="field-row">
+        <input type="text" id="executablePath" name="executablePath"
+               placeholder="C:\Program Files\CODESYS 3.5.20.0\CODESYS\Common\CODESYS.exe" autocomplete="off">
+        <button type="button" class="btn-secondary browse-btn" data-target="executablePath" data-filter=".exe">Browse…</button>
+      </div>
+      <div class="status" id="executablePath-status">&nbsp;</div>
+    </div>
+
+    <div class="field">
+      <label for="projectPath">Project (.project) file path</label>
+      <div class="field-row">
+        <input type="text" id="projectPath" name="projectPath"
+               placeholder="C:\demo\Plc.project" autocomplete="off">
+        <button type="button" class="btn-secondary browse-btn" data-target="projectPath" data-filter=".project">Browse…</button>
+      </div>
+      <div class="status" id="projectPath-status">&nbsp;</div>
+    </div>
+
+    <div class="field">
+      <label for="profile">CODESYS profile</label>
+      <select id="profile" name="profile">
+        <option value="">(default profile)</option>
+      </select>
+      <div class="status" id="profile-status">&nbsp;</div>
+    </div>
+
+    <button type="submit" id="save-button">Save</button>
+    <div id="banner"></div>
+  </form>
+</main>
+
+<div class="modal-backdrop" id="browser-backdrop">
+  <div class="modal">
+    <div class="modal-header">
+      <p class="modal-title" id="browser-title">Select a file</p>
+      <div class="breadcrumb" id="browser-path">Drives</div>
+    </div>
+    <div class="modal-list" id="browser-list"></div>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" id="browser-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const form = document.getElementById('settings-form');
+  const saveButton = document.getElementById('save-button');
+  const banner = document.getElementById('banner');
+  const fields = {
+    executablePath: document.getElementById('executablePath'),
+    projectPath: document.getElementById('projectPath'),
+    profile: document.getElementById('profile'),
+  };
+  const statuses = {
+    executablePath: document.getElementById('executablePath-status'),
+    projectPath: document.getElementById('projectPath-status'),
+    profile: document.getElementById('profile-status'),
+  };
+
+  function showStatus(key, exists) {
+    const el = statuses[key];
+    if (!fields[key].value.trim()) {
+      el.textContent = '\u00a0';
+      el.className = 'status';
+      return;
+    }
+    el.textContent = exists ? 'Found' : 'Not found on this machine';
+    el.className = 'status ' + (exists ? 'ok' : 'err');
+  }
+
+  function showBanner(kind, message) {
+    banner.textContent = message;
+    banner.className = kind;
+  }
+
+  async function loadCurrent() {
+    try {
+      const res = await fetch('/settings');
+      if (!res.ok) return;
+      const data = await res.json();
+      fields.executablePath.value = data.executablePath || '';
+      fields.projectPath.value = data.projectPath || '';
+      showStatus('executablePath', data.executableExists);
+      showStatus('projectPath', data.projectExists);
+      await refreshProfiles(data.profile || '');
+    } catch {
+      showBanner('err', 'Could not load current settings.');
+    }
+  }
+
+  // Repopulates the profile dropdown from whatever CODESYS.exe is currently in the
+  // executablePath field, so the list always matches the install actually selected —
+  // not necessarily the one last saved.
+  async function refreshProfiles(selectedValue) {
+    const select = fields.profile;
+    const wanted = selectedValue !== undefined ? selectedValue : select.value;
+    const exePath = fields.executablePath.value.trim();
+
+    select.innerHTML = '';
+    select.appendChild(new Option('(default profile)', ''));
+
+    if (!exePath) {
+      statuses.profile.textContent = ' ';
+      statuses.profile.className = 'status';
+      return;
+    }
+
+    select.disabled = true;
+    statuses.profile.textContent = 'Loading profiles…';
+    statuses.profile.className = 'status';
+
+    try {
+      const res = await fetch('/profiles?' + new URLSearchParams({ executablePath: exePath }));
+      const data = await res.json();
+
+      if (!res.ok) {
+        statuses.profile.textContent = data.detail || 'Could not list profiles for this executable.';
+        statuses.profile.className = 'status err';
+      } else if (data.length === 0) {
+        statuses.profile.textContent = 'No profiles found next to this executable.';
+        statuses.profile.className = 'status err';
+      } else {
+        for (const p of data) select.appendChild(new Option(p.name, p.name));
+        statuses.profile.textContent = `${data.length} profile${data.length === 1 ? '' : 's'} found.`;
+        statuses.profile.className = 'status ok';
+      }
+    } catch {
+      statuses.profile.textContent = 'Could not reach the server.';
+      statuses.profile.className = 'status err';
+    } finally {
+      select.disabled = false;
+    }
+
+    // Keep the previously selected/saved profile even if it wasn't among the ones just
+    // discovered (e.g. the saved value predates a CODESYS reinstall) so Save doesn't
+    // silently change it out from under the user.
+    if (wanted && !Array.from(select.options).some((o) => o.value === wanted)) {
+      select.appendChild(new Option(`${wanted} (not found)`, wanted));
+    }
+    select.value = wanted || '';
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    saveButton.disabled = true;
+    banner.className = '';
+
+    try {
+      const res = await fetch('/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          executablePath: fields.executablePath.value.trim(),
+          projectPath: fields.projectPath.value.trim(),
+          profile: fields.profile.value.trim(),
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        const message = data.detail || (data.errors && Object.entries(data.errors)
+          .map(([field, msgs]) => `${field}: ${msgs.join(' ')}`).join('\n')) || 'Save failed.';
+        showBanner('err', message);
+        return;
+      }
+
+      showStatus('executablePath', data.executableExists);
+      showStatus('projectPath', data.projectExists);
+      showBanner('ok', 'Saved.');
+    } catch {
+      showBanner('err', 'Save failed: could not reach the server.');
+    } finally {
+      saveButton.disabled = false;
+    }
+  });
+
+  loadCurrent();
+
+  // ---------------------------------------------------------------------
+  // Browse… file picker. There is no way for a web page to learn the real
+  // absolute path of a file chosen through <input type="file"> — browsers
+  // only ever hand back a fake path, by design. This server already has
+  // full local filesystem access, so instead the picker below drives a
+  // small in-page file explorer over GET /files (drives -> folders -> files).
+  // ---------------------------------------------------------------------
+  const browserBackdrop = document.getElementById('browser-backdrop');
+  const browserTitle = document.getElementById('browser-title');
+  const browserPathEl = document.getElementById('browser-path');
+  const browserList = document.getElementById('browser-list');
+  const browserCancel = document.getElementById('browser-cancel');
+
+  let activeTarget = null;
+  let activeFilter = null;
+
+  function openBrowser(target, filter) {
+    activeTarget = target;
+    activeFilter = filter;
+    browserTitle.textContent = target === 'executablePath' ? 'Select CODESYS.exe' : 'Select project file';
+    browserBackdrop.classList.add('open');
+
+    const current = fields[target].value.trim();
+    const cut = Math.max(current.lastIndexOf('\\'), current.lastIndexOf('/'));
+    browseTo(cut > 0 ? current.slice(0, cut) : null);
+  }
+
+  function closeBrowser() {
+    browserBackdrop.classList.remove('open');
+  }
+
+  async function browseTo(path) {
+    browserPathEl.textContent = path || 'Drives';
+    setListContent(makeEmptyRow('Loading…'));
+
+    try {
+      const qs = new URLSearchParams();
+      if (path) qs.set('path', path);
+      if (activeFilter) qs.set('filter', activeFilter);
+
+      const res = await fetch('/files?' + qs.toString());
+      const data = await res.json();
+
+      if (!res.ok) {
+        setListContent(makeEmptyRow(data.detail || 'Could not list this folder.'));
+        return;
+      }
+
+      renderListing(data);
+    } catch {
+      setListContent(makeEmptyRow('Could not reach the server.'));
+    }
+  }
+
+  function renderListing(data) {
+    browserPathEl.textContent = data.path || 'Drives';
+
+    const rows = [];
+    if (data.path) {
+      rows.push(makeUpRow(data.parent));
+    }
+
+    if (data.entries.length === 0) {
+      rows.push(makeEmptyRow('Nothing here.'));
+    } else {
+      for (const entry of data.entries) {
+        rows.push(makeEntryRow(entry));
+      }
+    }
+
+    setListContent(rows);
+  }
+
+  function setListContent(rowOrRows) {
+    browserList.innerHTML = '';
+    for (const row of Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows]) {
+      browserList.appendChild(row);
+    }
+  }
+
+  function makeEmptyRow(text) {
+    const el = document.createElement('div');
+    el.className = 'modal-empty';
+    el.textContent = text;
+    return el;
+  }
+
+  function makeUpRow(parentPath) {
+    const row = document.createElement('div');
+    row.className = 'modal-entry up';
+
+    const icon = document.createElement('span');
+    icon.className = 'icon';
+    icon.textContent = '⬆️';
+
+    const label = document.createElement('span');
+    label.textContent = '.. (up)';
+
+    row.append(icon, label);
+    row.addEventListener('click', () => browseTo(parentPath || null));
+    return row;
+  }
+
+  function makeEntryRow(entry) {
+    const row = document.createElement('div');
+    row.className = 'modal-entry';
+
+    const icon = document.createElement('span');
+    icon.className = 'icon';
+    icon.textContent = entry.isDirectory ? '📁' : '📄';
+
+    const label = document.createElement('span');
+    label.textContent = entry.name;
+
+    row.append(icon, label);
+    row.addEventListener('click', () => {
+      if (entry.isDirectory) {
+        browseTo(entry.fullPath);
+      } else {
+        fields[activeTarget].value = entry.fullPath;
+        showStatus(activeTarget, true);
+        closeBrowser();
+        if (activeTarget === 'executablePath') refreshProfiles();
+      }
+    });
+    return row;
+  }
+
+  fields.executablePath.addEventListener('change', () => refreshProfiles());
+
+  document.querySelectorAll('.browse-btn').forEach((btn) => {
+    btn.addEventListener('click', () => openBrowser(btn.dataset.target, btn.dataset.filter));
+  });
+
+  browserCancel.addEventListener('click', closeBrowser);
+  browserBackdrop.addEventListener('click', (e) => {
+    if (e.target === browserBackdrop) closeBrowser();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && browserBackdrop.classList.contains('open')) closeBrowser();
+  });
+</script>
+</body>
+</html>
