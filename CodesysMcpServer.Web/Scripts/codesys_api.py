@@ -25,9 +25,14 @@ Everything here targets IronPython 2.7 (the interpreter hosted by CODESYS).
 
 from __future__ import print_function
 
+import bisect
 import re
+import time
 
 from mcp_io import log
+
+# Subtrees of the project tree slower than this are logged while scanning.
+SLOW_SUBTREE_SECONDS = 2.0
 
 
 # ===========================================================================
@@ -94,6 +99,7 @@ class StText(object):
     def __init__(self, raw):
         self.raw = raw or u""
         self.masked, self.comments = _mask(self.raw)
+        self._comment_starts = [c[0] for c in self.comments]
 
     def comment_near(self, start, end):
         """
@@ -116,8 +122,16 @@ class StText(object):
         if line_end < 0:
             line_end = len(self.raw)
 
+        # Only comments starting in [min(shared_line_end, content_start), line_end]
+        # can qualify; comments are sorted by start, so bisect to that window instead
+        # of scanning them all (quadratic on large GVLs).
         found = []
-        for c_start, _c_end, text in self.comments:
+        index = bisect.bisect_left(self._comment_starts, min(shared_line_end, content_start))
+        while index < len(self.comments):
+            c_start, _c_end, text = self.comments[index]
+            if c_start > line_end:
+                break
+            index += 1
             if not text:
                 continue
             above = shared_line_end <= c_start < content_start
@@ -127,38 +141,57 @@ class StText(object):
         return u" ".join(found).strip()
 
 
+# Next character that can open a comment, pragma or string literal.
+_MASK_SPECIAL_RE = re.compile(r"\(\*|//|[{'\"]")
+_BLOCK_COMMENT_TOKEN_RE = re.compile(r"\(\*|\*\)")
+_STRING_TOKEN_RE = re.compile(r"[$'\"]")
+_NOT_NEWLINE_RE = re.compile(r"[^\r\n]")
+
+
 def _mask(text):
-    """Return (masked_text, [(start, end, comment_text), ...])."""
+    """
+    Return (masked_text, [(start, end, comment_text), ...]).
+
+    Jumps between special characters with regex searches and copies plain runs
+    in one slice. Walking character by character with str.startswith(x, index)
+    was quadratic under IronPython (it copies the remaining string on every call)
+    and took minutes on large generated GVLs.
+    """
     out = []
     comments = []
     index = 0
     length = len(text)
 
     while index < length:
-        char = text[index]
+        match = _MASK_SPECIAL_RE.search(text, index)
+        if match is None:
+            out.append(text[index:])
+            break
+
+        start = match.start()
+        if start > index:
+            out.append(text[index:start])
+
+        token = match.group(0)
 
         # Block comment, possibly nested.
-        if text.startswith(u"(*", index):
-            start = index
+        if token == u"(*":
             depth = 1
-            index += 2
-            while index < length and depth > 0:
-                if text.startswith(u"(*", index):
-                    depth += 1
-                    index += 2
-                elif text.startswith(u"*)", index):
-                    depth -= 1
-                    index += 2
-                else:
-                    index += 1
+            index = start + 2
+            while depth > 0:
+                inner = _BLOCK_COMMENT_TOKEN_RE.search(text, index)
+                if inner is None:
+                    index = length
+                    break
+                depth += 1 if inner.group(0) == u"(*" else -1
+                index = inner.end()
             comments.append((start, index, text[start + 2:max(start + 2, index - 2)].strip()))
             out.append(_blank(text[start:index]))
             continue
 
         # Line comment.
-        if text.startswith(u"//", index):
-            start = index
-            index = text.find(u"\n", index)
+        if token == u"//":
+            index = text.find(u"\n", start)
             if index < 0:
                 index = length
             comments.append((start, index, text[start + 2:index].strip()))
@@ -166,38 +199,34 @@ def _mask(text):
             continue
 
         # Pragma / attribute.
-        if char == u"{":
-            start = index
-            index = text.find(u"}", index)
+        if token == u"{":
+            index = text.find(u"}", start)
             index = length if index < 0 else index + 1
             out.append(_blank(text[start:index]))
             continue
 
         # String literal - kept verbatim so initial values survive.
-        if char == u"'" or char == u'"':
-            quote = char
-            start = index
-            index += 1
-            while index < length:
-                if text[index] == u"$":       # ST escape character
-                    index += 2
-                    continue
-                if text[index] == quote:
-                    index += 1
-                    break
-                index += 1
-            out.append(text[start:index])
-            continue
-
-        out.append(char)
-        index += 1
+        index = start + 1
+        while index < length:
+            inner = _STRING_TOKEN_RE.search(text, index)
+            if inner is None:
+                index = length
+                break
+            if inner.group(0) == u"$":       # ST escape character
+                index = inner.start() + 2
+                continue
+            index = inner.end()
+            if inner.group(0) == token:
+                break
+        index = min(index, length)
+        out.append(text[start:index])
 
     return u"".join(out), comments
 
 
 def _blank(chunk):
     """Replace a chunk with spaces, preserving newlines and total length."""
-    return u"".join([c if c in u"\r\n" else u" " for c in chunk])
+    return _NOT_NEWLINE_RE.sub(u" ", chunk)
 
 
 def _split_statements(st, start, end):
@@ -971,55 +1000,64 @@ class Project(object):
         if self._scanned:
             return
 
+        started = time.time()
         self._walk(self.Object, u"")
         self._scanned = True
-        log("Scanned project: %d POU(s), %d GVL(s), %d DUT(s), %d ENUM(s)"
-            % (len(self._pous), len(self._gvls), len(self._duts), len(self._enums)))
+        log("Scanned project in %.1fs: %d POU(s), %d GVL(s), %d DUT(s), %d ENUM(s)"
+            % (time.time() - started, len(self._pous), len(self._gvls), len(self._duts), len(self._enums)))
 
     def _walk(self, parent, prefix):
         for child in _children(parent):
-            name = object_name(child)
-            path = name if not prefix else prefix + u"/" + name
+            started = time.time()
+            self._visit(child, prefix)
+            elapsed = time.time() - started
+            if elapsed >= SLOW_SUBTREE_SECONDS:
+                log("  slow subtree: %s (%.1fs)" % (
+                    (prefix + u"/" if prefix else u"") + object_name(child), elapsed))
 
-            if _flag(child, "is_folder"):
-                self._folders.append(path)
-                self._walk(child, path)
-                continue
+    def _visit(self, child, prefix):
+        name = object_name(child)
+        path = name if not prefix else prefix + u"/" + name
 
-            if _flag(child, "is_application"):
-                self._applications.append((child, path))
-                self._walk(child, path)
-                continue
-
-            # This engine version exposes no is_pou / is_dut / is_gvl flags (confirmed:
-            # every ScriptObject only has is_folder and is_application; everything else
-            # comes back "<missing>"). The only reliable, version-tolerant signal left is
-            # the textual declaration itself, so classify by parsing its header instead -
-            # a "TYPE Name :" header means DUT/ENUM, a PROGRAM/FUNCTION_BLOCK/FUNCTION/
-            # INTERFACE header means POU, and a bare VAR_GLOBAL block (no header at all,
-            # constant/persistent/retain qualifiers included) means GVL.
-            declaration = _textual(child, "textual_declaration")
-            if declaration is not None:
-                masked = _mask(declaration)[0]
-
-                if _TYPE_HEADER_RE.search(masked):
-                    parsed = parse_type_declaration(declaration)
-                    if parsed.get("kind") == "enum":
-                        self._enums.append(Enum(child, path, parsed))
-                    else:
-                        self._duts.append(Dut(child, path, parsed))
-                    continue
-
-                if _POU_KIND_RE.search(masked):
-                    self._pous.append(Pou(child, path))
-                    continue
-
-                self._gvls.append(Gvl(child, path))
-                continue
-
-            # Devices, task configurations, library managers, visualizations, ...
-            self._other.append(path)
+        if _flag(child, "is_folder"):
+            self._folders.append(path)
             self._walk(child, path)
+            return
+
+        if _flag(child, "is_application"):
+            self._applications.append((child, path))
+            self._walk(child, path)
+            return
+
+        # This engine version exposes no is_pou / is_dut / is_gvl flags (confirmed:
+        # every ScriptObject only has is_folder and is_application; everything else
+        # comes back "<missing>"). The only reliable, version-tolerant signal left is
+        # the textual declaration itself, so classify by parsing its header instead -
+        # a "TYPE Name :" header means DUT/ENUM, a PROGRAM/FUNCTION_BLOCK/FUNCTION/
+        # INTERFACE header means POU, and a bare VAR_GLOBAL block (no header at all,
+        # constant/persistent/retain qualifiers included) means GVL.
+        declaration = _textual(child, "textual_declaration")
+        if declaration is not None:
+            masked = _mask(declaration)[0]
+
+            if _TYPE_HEADER_RE.search(masked):
+                parsed = parse_type_declaration(declaration)
+                if parsed.get("kind") == "enum":
+                    self._enums.append(Enum(child, path, parsed))
+                else:
+                    self._duts.append(Dut(child, path, parsed))
+                return
+
+            if _POU_KIND_RE.search(masked):
+                self._pous.append(Pou(child, path))
+                return
+
+            self._gvls.append(Gvl(child, path))
+            return
+
+        # Devices, task configurations, library managers, visualizations, ...
+        self._other.append(path)
+        self._walk(child, path)
 
     # -- collections -----------------------------------------------------
     @property

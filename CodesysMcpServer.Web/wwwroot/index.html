@@ -16,6 +16,7 @@
     --accent: #2563eb;
     --ok: #1a7f37;
     --err: #c92a2a;
+    --warn: #b7791f;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -27,6 +28,7 @@
       --accent: #5b8def;
       --ok: #3fb950;
       --err: #ff6b6b;
+      --warn: #e3b341;
     }
   }
   * { box-sizing: border-box; }
@@ -99,6 +101,39 @@
     font-weight: 500;
   }
   #structure-button { margin-left: 0.6rem; }
+
+  /* Persistent CODESYS session card */
+  #session-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.9rem 1rem;
+    margin-bottom: 1.75rem;
+  }
+  .session-head { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+  .session-title { font-weight: 600; }
+  .session-dot {
+    width: 0.65rem;
+    height: 0.65rem;
+    border-radius: 50%;
+    flex: none;
+    background: var(--muted);
+  }
+  .session-dot.ready { background: var(--ok); }
+  .session-dot.busy, .session-dot.starting, .session-dot.stopping { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+  .session-dot.error { background: var(--err); }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+  .session-state {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  .session-actions { margin-left: auto; display: flex; gap: 0.5rem; }
+  .session-actions button { padding: 0.4rem 1rem; }
+  #session-detail { margin-top: 0.35rem; }
+  #session-error { margin-top: 0.35rem; font-size: 0.85rem; color: var(--err); white-space: pre-wrap; }
+  #session-error:empty { display: none; }
 
   /* Project structure panel */
   #structure-panel { display: none; margin-top: 1.5rem; }
@@ -204,6 +239,20 @@
     Saving writes <code>appsettings.production.json</code> next to the server and takes
     effect immediately.
   </p>
+
+  <section id="session-card" aria-live="polite">
+    <div class="session-head">
+      <span class="session-dot" id="session-dot"></span>
+      <span class="session-title">CODESYS session</span>
+      <span class="session-state" id="session-state">…</span>
+      <div class="session-actions">
+        <button type="button" id="session-start">Start</button>
+        <button type="button" class="btn-secondary" id="session-stop">Stop</button>
+      </div>
+    </div>
+    <div class="status" id="session-detail">&nbsp;</div>
+    <div id="session-error"></div>
+  </section>
 
   <form id="settings-form">
     <div class="field">
@@ -545,6 +594,129 @@
   }
 
   structureButton.addEventListener('click', loadStructure);
+
+  // ---------------------------------------------------------------------
+  // Persistent CODESYS session: GET /session, polled quickly while something
+  // is in progress (starting / busy / stopping) and slowly otherwise.
+  // Start = POST /session/start (launches CODESYS and opens the project),
+  // Stop  = POST /session/stop  (closes the project, releasing the file).
+  // ---------------------------------------------------------------------
+  const sessionDot = document.getElementById('session-dot');
+  const sessionState = document.getElementById('session-state');
+  const sessionDetail = document.getElementById('session-detail');
+  const sessionError = document.getElementById('session-error');
+  const sessionStart = document.getElementById('session-start');
+  const sessionStop = document.getElementById('session-stop');
+
+  const STATE_LABELS = {
+    disabled: 'Disabled',
+    stopped: 'Stopped',
+    starting: 'Starting…',
+    ready: 'Ready',
+    busy: 'Busy',
+    stopping: 'Stopping…',
+  };
+  const ACTIVE_STATES = new Set(['starting', 'busy', 'stopping']);
+
+  let sessionTimer = null;
+  let pendingAction = null;   // 'start' | 'stop' while our own request is outstanding
+
+  function ago(iso) {
+    const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+    return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  }
+
+  function renderSession(s) {
+    let state = s.state;
+    // Our own start/stop request may be queued behind other work before the server reflects it.
+    if (pendingAction === 'start' && (state === 'stopped' || state === 'ready')) state = 'starting';
+    if (pendingAction === 'stop' && state !== 'stopped') state = 'stopping';
+
+    sessionDot.className = 'session-dot ' + (s.lastError && state === 'stopped' ? 'error' : state);
+    sessionState.textContent = STATE_LABELS[state] || state;
+
+    let detail;
+    switch (state) {
+      case 'disabled':
+        detail = 'KeepSessionAlive is off: every call starts its own CODESYS instance.';
+        break;
+      case 'stopped':
+        detail = 'CODESYS is not running. The next call (or Start) launches it and opens the project.';
+        break;
+      case 'starting':
+        detail = s.busySince
+          ? `Launching CODESYS and opening the project… ${ago(s.busySince)}`
+          : 'Launching CODESYS and opening the project…';
+        break;
+      case 'stopping':
+        detail = s.currentScript
+          ? `Stopping after ${s.currentScript} finishes…`
+          : 'Closing the project and stopping CODESYS…';
+        break;
+      case 'busy':
+        detail = `Running ${s.currentScript} for ${ago(s.busySince)} · pid ${s.processId} · up ${ago(s.startedAt)}`;
+        break;
+      default:
+        detail = `Project open · pid ${s.processId} · up ${ago(s.startedAt)} · ${s.requestsServed} request${s.requestsServed === 1 ? '' : 's'} served`;
+    }
+    sessionDetail.textContent = detail;
+    sessionError.textContent = s.lastError || '';
+
+    const enabled = s.enabled;
+    sessionStart.hidden = !enabled;
+    sessionStop.hidden = !enabled;
+    sessionStart.disabled = pendingAction !== null || state !== 'stopped';
+    sessionStop.disabled = pendingAction !== null || state === 'stopped' || state === 'stopping';
+
+    return state;
+  }
+
+  async function refreshSession() {
+    clearTimeout(sessionTimer);
+    let state = 'stopped';
+    try {
+      const res = await fetch('/session');
+      if (res.ok) state = renderSession(await res.json());
+      else sessionDetail.textContent = 'Could not read the session state.';
+    } catch {
+      sessionDot.className = 'session-dot error';
+      sessionState.textContent = 'Unknown';
+      sessionDetail.textContent = 'Could not reach the server.';
+    }
+    const fast = pendingAction !== null || ACTIVE_STATES.has(state);
+    sessionTimer = setTimeout(refreshSession, fast ? 1000 : 5000);
+  }
+
+  async function sessionAction(action) {
+    pendingAction = action;
+    sessionError.textContent = '';
+    refreshSession();
+
+    try {
+      const res = await fetch('/session/' + action, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        sessionError.textContent = data.detail || `${action === 'start' ? 'Start' : 'Stop'} failed (HTTP ${res.status}).`;
+      }
+    } catch {
+      sessionError.textContent = 'Could not reach the server.';
+    } finally {
+      pendingAction = null;
+      await refreshSession();
+    }
+  }
+
+  sessionStart.addEventListener('click', () => sessionAction('start'));
+  sessionStop.addEventListener('click', () => {
+    const msg = 'Stop CODESYS? The project is closed without saving pending in-memory changes, '
+      + 'and the next call will have to start CODESYS again.';
+    if (confirm(msg)) sessionAction('stop');
+  });
+
+  refreshSession();
 
   // ---------------------------------------------------------------------
   // Browse… file picker. There is no way for a web page to learn the real

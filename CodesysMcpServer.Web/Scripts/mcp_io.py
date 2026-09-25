@@ -29,6 +29,10 @@ import traceback
 RESULT_BEGIN = "<<<MCP_RESULT_BEGIN>>>"
 RESULT_END = "<<<MCP_RESULT_END>>>"
 
+# Set by session_host.py while it loads a script: run() then hands the handler over
+# instead of executing it and closing CODESYS. None means "one-shot" mode.
+HOSTED_HANDLERS = None
+
 
 def log(message):
     """Print a progress line. The .NET runner logs every line as it arrives."""
@@ -64,8 +68,12 @@ def require(request, key):
     return value
 
 
-def emit(request, data=None, ok=True, error=None):
-    """Write the result envelope to stdout and to the result file."""
+def emit(request, data=None, ok=True, error=None, echo=True):
+    """
+    Write the result envelope to the result file and, when `echo` is set, to stdout.
+    The file is written under a temporary name and renamed into place, so a reader
+    polling for it never sees a half-written envelope.
+    """
     envelope = {"ok": bool(ok), "data": data, "error": error}
 
     try:
@@ -81,10 +89,11 @@ def emit(request, data=None, ok=True, error=None):
             },
         }, indent=2)
 
-    print(RESULT_BEGIN)
-    print(text)
-    print(RESULT_END)
-    _flush()
+    if echo:
+        print(RESULT_BEGIN)
+        print(text)
+        print(RESULT_END)
+        _flush()
 
     result_path = None
     if isinstance(request, dict):
@@ -92,11 +101,15 @@ def emit(request, data=None, ok=True, error=None):
 
     if result_path:
         try:
-            handle = codecs.open(result_path, "w", "utf-8")
+            temp_path = result_path + ".tmp"
+            handle = codecs.open(temp_path, "w", "utf-8")
             try:
                 handle.write(text)
             finally:
                 handle.close()
+            if os.path.exists(result_path):
+                os.remove(result_path)
+            os.rename(temp_path, result_path)
         except Exception:
             print("[mcp] WARNING: could not write result file: " + traceback.format_exc())
             _flush()
@@ -106,7 +119,14 @@ def run(handler):
     """
     Entry point used by every script: read the request, invoke the handler,
     emit the envelope, and exit with a meaningful status code.
+
+    Inside the persistent session host the handler is only registered; the host
+    calls it per request and keeps CODESYS (and the open project) alive.
     """
+    if HOSTED_HANDLERS is not None:
+        HOSTED_HANDLERS.append(handler)
+        return
+
     request = None
     try:
         request = read_request()

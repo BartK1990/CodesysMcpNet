@@ -51,4 +51,21 @@ public sealed class CodesysOptions
 
     /// <summary>Keep the temporary request/result files for troubleshooting.</summary>
     public bool KeepTempFiles { get; set; }
+
+    /// <summary>
+    /// Keep one CODESYS instance running with the project open and send every request to it
+    /// (see <see cref="CodesysSession"/>), instead of starting CODESYS.exe per request. Start-up
+    /// and project load are then paid once instead of on every call. Only applies when
+    /// <see cref="UseCodesys"/> is true.
+    /// </summary>
+    public bool KeepSessionAlive { get; set; } = true;
+
+    /// <summary>Start the session and open the project as soon as the server starts.</summary>
+    public bool StartSessionOnStartup { get; set; } = true;
+
+    /// <summary>
+    /// Stop the session after this many idle minutes, releasing CODESYS and the project file.
+    /// 0 keeps it running until the server stops or <c>POST /session/stop</c> is called.
+    /// </summary>
+    public int SessionIdleMinutes { get; set; }
 }

@@ -23,6 +23,10 @@ public sealed record ScriptResult(JsonElement Data, int ExitCode, TimeSpan Durat
 ///
 /// Every line the script prints is logged as it arrives, so Python progress shows up live in the
 /// console and in the log files.
+///
+/// With <see cref="CodesysOptions.KeepSessionAlive"/> the same request file is handed to the
+/// persistent <see cref="CodesysSession"/> instead of a fresh CODESYS.exe; the envelope comes
+/// back through the same result file, so everything after that point is shared.
 /// </summary>
 public sealed class PythonRunner
 {
@@ -41,6 +45,7 @@ public sealed class PythonRunner
     private static readonly SemaphoreSlim Gate = new(1, 1);
 
     private readonly IOptionsMonitor<CodesysOptions> _optionsMonitor;
+    private readonly CodesysSession _session;
     private readonly ILogger<PythonRunner> _logger;
     private readonly string _scriptsDirectory;
 
@@ -49,9 +54,13 @@ public sealed class PythonRunner
     // next script run without restarting the server.
     private CodesysOptions Options => _optionsMonitor.CurrentValue;
 
-    public PythonRunner(IOptionsMonitor<CodesysOptions> options, ILogger<PythonRunner> logger)
+    public PythonRunner(
+        IOptionsMonitor<CodesysOptions> options,
+        CodesysSession session,
+        ILogger<PythonRunner> logger)
     {
         _optionsMonitor = options;
+        _session = session;
         _logger = logger;
         _scriptsDirectory = Path.IsPathRooted(Options.ScriptsDirectory)
             ? Options.ScriptsDirectory
@@ -85,13 +94,21 @@ public sealed class PythonRunner
         var requestPath = Path.Combine(workDirectory, $"{correlation}.req.json");
         var resultPath = Path.Combine(workDirectory, $"{correlation}.res.json");
 
-        await WriteRequestFileAsync(requestPath, resultPath, payload, ct);
+        await WriteRequestFileAsync(requestPath, resultPath, Path.GetFileName(scriptPath), payload, ct);
 
         await Gate.WaitAsync(ct);
         try
         {
             using var scope = _logger.BeginScope($"script={scriptName} id={correlation[..8]}");
-            return await RunProcessAsync(scriptName, scriptPath, requestPath, resultPath, extraArguments, ct);
+
+            if (!_session.Enabled)
+                return await RunProcessAsync(scriptName, scriptPath, requestPath, resultPath, extraArguments, ct);
+
+            var elapsed = await _session.RunAsync(scriptName, _scriptsDirectory, workDirectory, requestPath, resultPath, ct);
+            _logger.LogInformation("Script {Script} finished in the CODESYS session after {Elapsed:0.00}s", scriptName, elapsed.TotalSeconds);
+
+            var envelope = await ReadEnvelopeAsync(resultPath, stdout: string.Empty, ct);
+            return Interpret(scriptName, envelope, exitCode: 0, stderr: string.Empty, elapsed);
         }
         finally
         {
@@ -196,7 +213,59 @@ public sealed class PythonRunner
             stopwatch.Elapsed.TotalSeconds);
 
         var envelope = await ReadEnvelopeAsync(resultPath, stdout.ToString(), ct);
+        return Interpret(scriptName, envelope, exitCode, stderr.ToString(), stopwatch.Elapsed);
+    }
 
+    /// <summary>Stops the persistent session once any in-flight script has finished.</summary>
+    public async Task StopSessionAsync(CancellationToken ct)
+    {
+        _session.MarkStopping();
+
+        try
+        {
+            await Gate.WaitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            // The caller stopped waiting, but the stop request stands.
+            _ = StopSessionInBackgroundAsync();
+            throw;
+        }
+
+        try
+        {
+            await _session.StopAsync();
+        }
+        finally
+        {
+            Gate.Release();
+        }
+    }
+
+    private async Task StopSessionInBackgroundAsync()
+    {
+        await Gate.WaitAsync();
+        try
+        {
+            await _session.StopAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Stopping the CODESYS session failed");
+        }
+        finally
+        {
+            Gate.Release();
+        }
+    }
+
+    private static ScriptResult Interpret(
+        string scriptName,
+        JsonDocument? envelope,
+        int exitCode,
+        string stderr,
+        TimeSpan elapsed)
+    {
         if (envelope is null)
         {
             throw new ScriptExecutionException(
@@ -205,7 +274,7 @@ public sealed class PythonRunner
                     ? $"Script '{scriptName}' produced no result envelope."
                     : $"Script '{scriptName}' failed with exit code {exitCode} and produced no result envelope.",
                 exitCode,
-                stderr: Tail(stderr.ToString()));
+                stderr: Tail(stderr));
         }
 
         using var document = envelope;
@@ -233,14 +302,14 @@ public sealed class PythonRunner
                 message,
                 exitCode,
                 traceback,
-                Tail(stderr.ToString()));
+                Tail(stderr));
         }
 
         var data = root.TryGetProperty("data", out var dataElement)
             ? dataElement.Clone()
             : default;
 
-        return new ScriptResult(data, exitCode, stopwatch.Elapsed);
+        return new ScriptResult(data, exitCode, elapsed);
     }
 
     private ProcessStartInfo BuildStartInfo(
@@ -263,37 +332,11 @@ public sealed class PythonRunner
         {
             startInfo.FileName = Options.ExecutablePath;
 
-            // CODESYS re-tokenizes its own raw command line on whitespace instead of trusting
-            // the OS-level argv it was started with, so a value containing spaces (profile names
-            // routinely do, e.g. "CODESYS V3.5 SP21 Patch 3") must be wrapped in literal quote
-            // characters to survive as one token. Its tokenizer is naive, though: it just toggles
-            // on a bare '"', with no idea what a backslash-escaped \" means. ProcessStartInfo.
-            // ArgumentList would "helpfully" backslash-escape those quotes (correct for a normal
-            // argv-parsing child, wrong here) and CODESYS would split on the space anyway. So the
-            // whole command line is built by hand into Arguments — bypassing ArgumentList's
-            // escaping — to keep the quotes exactly as CODESYS expects them.
-            var arguments = new StringBuilder();
-
-            if (!string.IsNullOrWhiteSpace(Options.Profile))
-                arguments.Append("--profile=").Append(QuoteForCodesys(Options.Profile)).Append(' ');
-
-            if (Options.NoUserInterface)
-                arguments.Append("--noUI ");
-
-            foreach (var extra in Options.AdditionalArguments)
-                arguments.Append(extra).Append(' ');
-
-            arguments.Append("--runscript=").Append(QuoteForCodesys(scriptPath)).Append(' ');
-
-            // CODESYS splits the scriptargs value on whitespace, so everything the script needs
-            // travels inside the single request file instead of on the command line.
             var scriptArgs = new List<string> { requestPath };
             if (extraArguments is { Count: > 0 })
                 scriptArgs.AddRange(extraArguments);
 
-            arguments.Append("--scriptargs:").Append(string.Join(' ', scriptArgs));
-
-            startInfo.Arguments = arguments.ToString();
+            startInfo.Arguments = BuildCodesysArguments(Options, scriptPath, scriptArgs);
         }
         else
         {
@@ -312,6 +355,41 @@ public sealed class PythonRunner
         }
 
         return startInfo;
+    }
+
+    /// <summary>Builds the CODESYS.exe command line that runs <paramref name="scriptPath"/>.</summary>
+    internal static string BuildCodesysArguments(
+        CodesysOptions options,
+        string scriptPath,
+        IReadOnlyList<string> scriptArgs)
+    {
+        // CODESYS re-tokenizes its own raw command line on whitespace instead of trusting
+        // the OS-level argv it was started with, so a value containing spaces (profile names
+        // routinely do, e.g. "CODESYS V3.5 SP21 Patch 3") must be wrapped in literal quote
+        // characters to survive as one token. Its tokenizer is naive, though: it just toggles
+        // on a bare '"', with no idea what a backslash-escaped \" means. ProcessStartInfo.
+        // ArgumentList would "helpfully" backslash-escape those quotes (correct for a normal
+        // argv-parsing child, wrong here) and CODESYS would split on the space anyway. So the
+        // whole command line is built by hand into Arguments — bypassing ArgumentList's
+        // escaping — to keep the quotes exactly as CODESYS expects them.
+        var arguments = new StringBuilder();
+
+        if (!string.IsNullOrWhiteSpace(options.Profile))
+            arguments.Append("--profile=").Append(QuoteForCodesys(options.Profile)).Append(' ');
+
+        if (options.NoUserInterface)
+            arguments.Append("--noUI ");
+
+        foreach (var extra in options.AdditionalArguments)
+            arguments.Append(extra).Append(' ');
+
+        arguments.Append("--runscript=").Append(QuoteForCodesys(scriptPath)).Append(' ');
+
+        // CODESYS splits the scriptargs value on whitespace, so everything the script needs
+        // travels inside the single request file instead of on the command line.
+        arguments.Append("--scriptargs:").Append(string.Join(' ', scriptArgs));
+
+        return arguments.ToString();
     }
 
     /// <summary>Wraps a value in the plain (unescaped) quotes CODESYS's own arg tokenizer expects.</summary>
@@ -357,6 +435,7 @@ public sealed class PythonRunner
     private async Task WriteRequestFileAsync(
         string requestPath,
         string resultPath,
+        string scriptFileName,
         object payload,
         CancellationToken ct)
     {
@@ -365,6 +444,7 @@ public sealed class PythonRunner
                    ?? new System.Text.Json.Nodes.JsonObject();
 
         node["resultPath"] = resultPath;
+        node["script"] = scriptFileName;   // lets the persistent session know what to run
 
         // UTF-8 without BOM: Python's json module rejects a leading BOM.
         await File.WriteAllTextAsync(requestPath, node.ToJsonString(PayloadJsonOptions), Utf8NoBom, ct);
