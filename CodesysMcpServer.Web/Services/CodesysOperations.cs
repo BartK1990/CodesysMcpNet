@@ -27,6 +27,10 @@ public sealed class CodesysOperations
 
     private string? CurrentProjectPath => _options.CurrentValue.ProjectPath;
 
+    /// <summary>Opens the project and nothing else — warms up the persistent CODESYS session.</summary>
+    public Task<JsonElement> OpenProjectAsync(CancellationToken ct) =>
+        RunAsync("ping.py", new { projectPath = CurrentProjectPath }, ct);
+
     public Task<JsonElement> GetStructureAsync(CancellationToken ct) =>
         RunAsync("structure.py", new { projectPath = CurrentProjectPath }, ct);
 

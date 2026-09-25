@@ -36,6 +36,7 @@ builder.Logging.AddFile(builder.Configuration.GetSection("FileLogging"));
 // Services
 // ---------------------------------------------------------------------------
 builder.Services.Configure<CodesysOptions>(builder.Configuration.GetSection(CodesysOptions.SectionName));
+builder.Services.AddSingleton<CodesysSession>();
 builder.Services.AddSingleton<PythonRunner>();
 builder.Services.AddSingleton<CodesysOperations>();
 builder.Services.AddSingleton<AppSettingsWriter>();
@@ -219,6 +220,42 @@ app.MapGet("/profiles", (string? executablePath) =>
     .WithTags("Settings")
     .WithSummary("CODESYS version profiles installed alongside the given (or currently saved) CODESYS.exe.");
 
+// 0b. Persistent CODESYS session ------------------------------------------------
+var session = app.Services.GetRequiredService<CodesysSession>();
+var runner = app.Services.GetRequiredService<PythonRunner>();
+
+app.MapGet("/session", () => Results.Json(session.GetStatus()))
+    .WithName("GetSession")
+    .WithTags("Session")
+    .WithSummary("Whether the persistent CODESYS instance is running, and since when.");
+
+app.MapPost("/session/start", (CancellationToken ct) =>
+        RunAsync(async ct2 =>
+        {
+            try
+            {
+                return await ops.OpenProjectAsync(ct2);
+            }
+            catch (ScriptExecutionException ex)
+            {
+                // Opening the project is the point of a start, so its failure is session state.
+                session.ReportFailure($"Start failed: {ex.Message}");
+                throw;
+            }
+        }, ct))
+    .WithName("StartSession")
+    .WithTags("Session")
+    .WithSummary("Start CODESYS (if needed) and open the configured project, so later calls are fast.");
+
+app.MapPost("/session/stop", async (CancellationToken ct) =>
+    {
+        await runner.StopSessionAsync(ct);
+        return Results.Json(session.GetStatus());
+    })
+    .WithName("StopSession")
+    .WithTags("Session")
+    .WithSummary("Close the project and stop the persistent CODESYS instance (releases the project file).");
+
 // 1. Project structure -------------------------------------------------------
 app.MapGet("/structure", (CancellationToken ct) =>
         RunAsync(ct2 => ops.GetStructureAsync(ct2), ct))
@@ -293,6 +330,32 @@ app.MapPost("/compile", (CompileRequest request, CancellationToken ct) =>
 log.LogInformation(
     "CODESYS MCP server starting. REST on this Kestrel instance, MCP tools at /mcp. " +
     "Scripts are executed serially against a single CODESYS instance.");
+
+// Pay CODESYS start-up and project load in the background now rather than on the first call.
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    var options = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<CodesysOptions>>().CurrentValue;
+    if (!session.Enabled || !options.StartSessionOnStartup || string.IsNullOrWhiteSpace(options.ProjectPath))
+        return;
+
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            log.LogInformation("Warming up the CODESYS session with {Project}", options.ProjectPath);
+            await ops.OpenProjectAsync(app.Lifetime.ApplicationStopping);
+            log.LogInformation("CODESYS session is warm");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            log.LogWarning(ex, "Warming up the CODESYS session failed; it will be retried on the first request");
+            session.ReportFailure($"Warm-up failed: {ex.Message}");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    });
+});
 
 app.Run();
 return 0;

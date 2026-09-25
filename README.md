@@ -35,6 +35,7 @@ as input.
   /Services
     CodesysOperations.cs     Shared implementation: validation, script selection, payload shaping
     PythonRunner.cs          Process host, live log streaming, JSON envelope handling
+    CodesysSession.cs        Persistent CODESYS instance fed through a queue directory
     CodesysOptions.cs        Configuration ("Codesys" section), incl. ExecutablePath + ProjectPath
     AppSettingsWriter.cs     Reads/writes appsettings.production.json for the settings page
     SettingsSnapshot.cs      Response shape of GET/POST /settings
@@ -48,6 +49,8 @@ as input.
     mcp_io.py                Request/result plumbing shared by every script
     codesys_api.py           Facade over the Scripting Engine + Structured Text parser
     selftest.py              Parser self-test (no CODESYS required)
+    session_host.py          Long-running host script of the persistent session
+    ping.py                  Opens the project only (session warm-up)
     compile.py  structure.py
     pou_read.py   pou_update.py  pou_create.py
     gvl_read.py   gvl_create.py
@@ -105,6 +108,9 @@ Every operation below acts on the project configured on the [settings page](#set
 | POST | `/enum/create`   | `{ name, values: ["Idle := 3","Busy"], baseType?, parentPath? }` |
 | POST | `/compile`       | `{ clean?, saveAfterCompile? }` |
 | GET  | `/health`        | – |
+| GET  | `/session`       | – (persistent CODESYS status) |
+| POST | `/session/start` | – (start CODESYS and open the project) |
+| POST | `/session/stop`  | – (stop CODESYS, releasing the project file) |
 
 Status codes: `200` success, `400` invalid request, no project configured, or the
 configured project file doesn't exist, `502` the script failed (the ProblemDetails body
@@ -153,7 +159,10 @@ REST-specific; on the MCP side the message text carries the traceback instead).
   "ScriptsDirectory": "Scripts",
   "WorkDirectory": "C:\\ProgramData\\CodesysMcpNet\\work",
   "TimeoutSeconds": 600,
-  "KeepTempFiles": false
+  "KeepTempFiles": false,
+  "KeepSessionAlive": true,               // one long-lived CODESYS instead of one per call
+  "StartSessionOnStartup": true,          // open the project as soon as the server starts
+  "SessionIdleMinutes": 0                 // >0 stops CODESYS after that much idle time
 }
 ```
 
@@ -169,8 +178,34 @@ name is what `CODESYS.exe --profile=` expects (see the CODESYS installation dire
 whitespace. The server logs a warning if it does.
 
 Every script runs serialized behind a semaphore, because CODESYS is effectively a
-single-instance application. Expect tens of seconds per call — most of it is CODESYS
-start-up, not the script.
+single-instance application.
+
+### Persistent session
+
+Starting CODESYS and opening a project takes 30–60 s, so by default (`KeepSessionAlive`)
+the server does it once: `CODESYS.exe --noUI --runscript=session_host.py` stays running
+with the project open, and each request is a JSON file moved into
+`<WorkDirectory>\session\`, which the host claims, runs and answers through the usual
+result file. Warm calls take a second or two instead of the full start-up.
+
+* The first request (or server start-up, with `StartSessionOnStartup`) pays the start-up.
+* The host reloads the project if the `.project` file changes on disk, switches when a
+  different project is configured, and restarts when the executable/profile changes.
+* A request that fails with unsaved changes has those changes discarded (project closed
+  without saving), as a failed one-shot run would.
+* While the session runs **CODESYS holds the project open**, so opening it in the CODESYS
+  IDE at the same time is not supported. `POST /session/stop` (or `SessionIdleMinutes`)
+  releases it; the next call starts it again.
+* A timed-out request kills the session; the host also exits by itself if the server
+  process disappears.
+* Edits to `codesys_api.py` / `mcp_io.py` take effect after `POST /session/stop`
+  (individual operation scripts are re-read on every call).
+
+The [settings page](#settings-page) shows the session state (Stopped / Starting / Ready /
+Busy / Stopping, with the running script, uptime and last error) and has **Start** / **Stop**
+buttons; it polls `GET /session`.
+
+Set `KeepSessionAlive` to `false` to go back to one CODESYS process per call.
 
 ## Logging
 
