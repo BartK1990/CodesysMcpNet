@@ -270,11 +270,11 @@ app.MapGet("/pou/content", (string name, CancellationToken ct) =>
     .WithTags("Read")
     .WithSummary("Full ST source (declaration + implementation) of a POU.");
 
-app.MapGet("/gvl/content", (string name, CancellationToken ct) =>
-        RunAsync(ct2 => ops.GetGvlContentAsync(name, ct2), ct))
+app.MapGet("/gvl/content", (string name, string? filter, CancellationToken ct) =>
+        RunAsync(ct2 => ops.GetGvlContentAsync(name, filter, ct2), ct))
     .WithName("GetGvlContent")
     .WithTags("Read")
-    .WithSummary("Variables of a global variable list, with types and initial values.");
+    .WithSummary("Variables of a global variable list, with types and initial values; optional name filter.");
 
 app.MapGet("/dut/content", (string name, CancellationToken ct) =>
         RunAsync(ct2 => ops.GetDutContentAsync(name, ct2), ct))
@@ -287,6 +287,19 @@ app.MapGet("/enum/content", (string name, CancellationToken ct) =>
     .WithName("GetEnumContent")
     .WithTags("Read")
     .WithSummary("Values of an ENUM DUT.");
+
+app.MapGet("/search", (string pattern, bool? regex, bool? caseSensitive, bool? ignoreComments, int? maxResults, CancellationToken ct) =>
+        RunAsync(ct2 => ops.SearchTextAsync(
+            pattern, regex ?? false, caseSensitive ?? false, ignoreComments ?? false, maxResults, ct2), ct))
+    .WithName("SearchText")
+    .WithTags("Read")
+    .WithSummary("Search declarations and implementations of all POUs, members, GVLs, DUTs and ENUMs.");
+
+app.MapGet("/tasks", (CancellationToken ct) =>
+        RunAsync(ct2 => ops.GetTaskConfigurationAsync(ct2), ct))
+    .WithName("GetTaskConfiguration")
+    .WithTags("Read")
+    .WithSummary("Tasks with kind, priority, interval, event trigger, watchdog and called POUs.");
 
 // 3. Update POU code ---------------------------------------------------------
 app.MapPost("/pou/update", (PouUpdateRequest request, CancellationToken ct) =>

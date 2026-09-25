@@ -26,6 +26,7 @@ Everything here targets IronPython 2.7 (the interpreter hosted by CODESYS).
 from __future__ import print_function
 
 import bisect
+import fnmatch
 import re
 import time
 
@@ -585,6 +586,45 @@ def _children(obj):
     return []
 
 
+# Object type GUIDs (ScriptObject.type). The first group was confirmed against
+# CODESYS V3.5 SP21; property/transition GUIDs are the documented CODESYS values.
+TYPE_FOLDER = u"738bea1e-99bb-4f04-90bb-a7a567e74e3a"
+TYPE_ACTION = u"8ac092e5-3128-4e26-9e7e-11016c6684f2"
+TYPE_METHOD = u"f8a58466-d7f6-439f-bbb8-d4600e41d099"
+TYPE_TASK_CONFIGURATION = u"ae1de277-a207-4a28-9efb-456c06bd52f3"
+TYPE_TASK = u"98a2708a-9b18-4f31-82ed-a1465b24fa2d"
+TYPE_PROPERTY = u"5a3b8626-d3e9-4f37-98b5-66420063d91e"
+TYPE_PROPERTY_ACCESSOR = u"792f2eb6-721e-4e64-ba20-bc98351056db"
+TYPE_TRANSITION = u"a10c6218-cb94-436f-91c6-e1652575253d"
+
+_MEMBER_KINDS = {
+    TYPE_ACTION: "ACTION",
+    TYPE_METHOD: "METHOD",
+    TYPE_PROPERTY: "PROPERTY",
+    TYPE_PROPERTY_ACCESSOR: "ACCESSOR",
+    TYPE_TRANSITION: "TRANSITION",
+}
+
+
+def object_type(obj):
+    """The object's type GUID as a lower-case string, or None when unavailable."""
+    try:
+        return str(obj.type).lower()
+    except Exception:
+        return None
+
+
+def _member_kind(obj, declaration):
+    kind = _MEMBER_KINDS.get(object_type(obj))
+    if kind:
+        return kind
+    kind = detect_pou_kind(declaration)
+    if kind == "UNKNOWN" and declaration is None and _textual(obj, "textual_implementation") is not None:
+        # Actions carry an implementation but no declaration of their own.
+        return "ACTION"
+    return kind
+
+
 # ===========================================================================
 # Object wrappers
 # ===========================================================================
@@ -647,6 +687,7 @@ class Pou(ScriptObjectWrapper):
         self._declaration = self.GetDeclaration()
         self.Type = detect_pou_kind(self._declaration)
         self.Language = self._language()
+        self._members = None
 
     def _language(self):
         for attribute in ("language", "implementation_language"):
@@ -665,15 +706,46 @@ class Pou(ScriptObjectWrapper):
             return "ST"
         return "UNKNOWN"
 
+    def MemberObjects(self):
+        """Methods, actions, properties, ... - including those kept in sub-folders."""
+        if self._members is None:
+            self._members = []
+            self._collect_members(self.Object, None)
+        return self._members
+
+    def _collect_members(self, parent, folder):
+        for child in _children(parent):
+            if object_type(child) == TYPE_FOLDER or _flag(child, "is_folder"):
+                name = object_name(child)
+                self._collect_members(child, name if not folder else folder + u"/" + name)
+                continue
+            self._members.append(PouMember(child, self, folder))
+
     def Members(self):
-        members = []
-        for child in _children(self.Object):
-            declaration = _textual(child, "textual_declaration")
-            members.append({
-                "name": object_name(child),
-                "kind": detect_pou_kind(declaration),
-            })
-        return members
+        return [m.Summary() for m in self.MemberObjects()]
+
+    def FindMember(self, chain):
+        """Resolve "Member" or "Member.Nested" (e.g. "Prop.Get") below this POU."""
+        head, _, rest = chain.partition(u".")
+        lowered = head.strip().lower()
+        members = self.MemberObjects()
+
+        found = None
+        for member in members:
+            if member.Name == head:
+                found = member
+                break
+        if found is None:
+            for member in members:
+                if member.Name.lower() == lowered:
+                    found = member
+                    break
+        if found is None:
+            available = u", ".join(sorted([m.Name for m in members])) or u"<none>"
+            raise LookupError(
+                "'" + self.Name + "' has no member '" + head + "'. Available: " + available)
+
+        return found.FindMember(rest) if rest else found
 
     def Summary(self):
         return {
@@ -693,6 +765,29 @@ class Pou(ScriptObjectWrapper):
             "language": self.Language,
             "members": self.Members(),
         })
+        return content
+
+
+class PouMember(Pou):
+    """A method / action / property / transition of a POU, addressed as "Parent.Member"."""
+
+    def __init__(self, obj, owner, folder=None):
+        Pou.__init__(self, obj, owner.Path + u"." + object_name(obj))
+        self.Owner = owner
+        self.Folder = folder
+        self.Type = _member_kind(obj, self._declaration)
+
+    def Summary(self):
+        summary = {"name": self.Name, "kind": self.Type}
+        if self.Folder:
+            summary["folder"] = self.Folder
+        return summary
+
+    def Content(self):
+        content = Pou.Content(self)
+        content["kind"] = self.Type
+        content["parent"] = self.Owner.Path
+        content["folder"] = self.Folder
         return content
 
 
@@ -717,13 +812,39 @@ class Gvl(ScriptObjectWrapper):
             "variableCount": len(self.Variables),
         }
 
-    def Content(self):
+    def Content(self, name_filter=None):
+        if not name_filter:
+            return {
+                "name": self.Name,
+                "path": self.Path,
+                "declaration": self.GetDeclaration(),
+                "variables": self.Variables,
+            }
+
+        # Filtered reads exist for very large lists, so the full declaration is left out.
+        variables = self.Variables
+        matches = name_matcher(name_filter)
+        selected = [v for v in variables if matches(v["name"])]
         return {
             "name": self.Name,
             "path": self.Path,
-            "declaration": self.GetDeclaration(),
-            "variables": self.Variables,
+            "filter": name_filter,
+            "totalVariableCount": len(variables),
+            "matchedVariableCount": len(selected),
+            "variables": selected,
         }
+
+
+def name_matcher(pattern):
+    """
+    Case-insensitive name predicate: a wildcard pattern ("*Fault*", "x?Run") when the
+    pattern contains * or ?, otherwise a plain substring match.
+    """
+    text = (pattern or u"").strip().lower()
+    if u"*" in text or u"?" in text:
+        regex = re.compile(fnmatch.translate(text))
+        return lambda name: regex.match((name or u"").lower()) is not None
+    return lambda name: text in (name or u"").lower()
 
 
 class Dut(ScriptObjectWrapper):
@@ -993,6 +1114,7 @@ class Project(object):
         self._enums = []
         self._applications = []
         self._folders = []
+        self._task_configurations = []
         self._other = []
 
     # -- scanning --------------------------------------------------------
@@ -1027,6 +1149,10 @@ class Project(object):
         if _flag(child, "is_application"):
             self._applications.append((child, path))
             self._walk(child, path)
+            return
+
+        if object_type(child) == TYPE_TASK_CONFIGURATION:
+            self._task_configurations.append((child, path))
             return
 
         # This engine version exposes no is_pou / is_dut / is_gvl flags (confirmed:
@@ -1110,6 +1236,20 @@ class Project(object):
         return found
 
     def FindPou(self, name):
+        """A POU, or one of its members addressed as "Parent.Member" (e.g. "FB_Motor.Reset")."""
+        found = self.Find(self.Pous, name)
+        if found is not None:
+            return found
+
+        # Folder names may contain dots, so try every dot as the POU/member boundary.
+        text = (name or u"").strip()
+        index = text.find(u".")
+        while index > 0:
+            owner = self.Find(self.Pous, text[:index])
+            if owner is not None:
+                return owner.FindMember(text[index + 1:])
+            index = text.find(u".", index + 1)
+
         return self.FindOrFail(self.Pous, name, "POU")
 
     def FindGvl(self, name):
@@ -1155,6 +1295,85 @@ class Project(object):
                 "enums": len(self.Enums),
             },
         }
+
+    # -- text search -----------------------------------------------------
+    def SearchText(self, pattern, is_regex=False, case_sensitive=False,
+                   ignore_comments=False, max_results=200):
+        """
+        Search declarations and implementations of every POU (members included),
+        GVL, DUT and ENUM. One hit per matching line, reported with its 1-based
+        line number within the section it was found in.
+        """
+        flags = re.MULTILINE | (0 if case_sensitive else re.IGNORECASE)
+        try:
+            regex = re.compile(pattern if is_regex else re.escape(pattern), flags)
+        except re.error as ex:
+            raise ValueError("Invalid regular expression '" + pattern + "': " + str(ex))
+
+        matches = []
+        not_textual = []
+        searched = 0
+        truncated = False
+
+        for kind, pou, member, item in self._searchable():
+            searched += 1
+            implementation = item.GetImplementation()
+            if implementation is None and kind in _KINDS_WITH_BODY:
+                not_textual.append(item.Path)
+
+            for section, text in (("declaration", item.GetDeclaration()),
+                                  ("implementation", implementation)):
+                if not text:
+                    continue
+                if not _search_section(regex, text, ignore_comments, max_results, matches, {
+                        "pou": pou, "member": member, "path": item.Path,
+                        "objectKind": kind, "section": section}):
+                    truncated = True
+                    break
+            if truncated:
+                break
+
+        return {
+            "pattern": pattern,
+            "regex": bool(is_regex),
+            "caseSensitive": bool(case_sensitive),
+            "ignoreComments": bool(ignore_comments),
+            "matchCount": len(matches),
+            "truncated": truncated,
+            "objectsSearched": searched,
+            "implementationNotTextual": not_textual,
+            "matches": matches,
+        }
+
+    def _searchable(self):
+        """(objectKind, pouName, memberChain, wrapper) for everything with text."""
+        for pou in self.Pous:
+            yield pou.Type, pou.Name, None, pou
+            for entry in _member_entries(pou, pou.Name, u""):
+                yield entry
+        for gvl in self.GVLs:
+            yield "GVL", gvl.Name, None, gvl
+        for dut in self.DUTs:
+            yield "DUT", dut.Name, None, dut
+        for enum in self.Enums:
+            yield "ENUM", enum.Name, None, enum
+
+    # -- tasks -----------------------------------------------------------
+    def TaskConfiguration(self):
+        self._scan()
+        configurations = []
+        for obj, path in self._task_configurations:
+            tasks = []
+            for child in _children(obj):
+                if object_type(child) == TYPE_TASK or _flag(child, "is_task"):
+                    tasks.append(_task_info(child, path + u"/" + object_name(child)))
+            configurations.append({
+                "path": path,
+                "application": path.rsplit(u"/", 1)[0] if u"/" in path else u"",
+                "taskCount": len(tasks),
+                "tasks": tasks,
+            })
+        return {"projectPath": self.Path, "taskConfigurations": configurations}
 
     # -- creation --------------------------------------------------------
     def CreatePou(self, name, pou_type="PRG", language="ST", return_type=None, parent_path=None):
@@ -1213,6 +1432,7 @@ class Project(object):
         self._enums = []
         self._applications = []
         self._folders = []
+        self._task_configurations = []
         self._other = []
 
     # -- lifecycle -------------------------------------------------------
@@ -1231,6 +1451,160 @@ class Project(object):
         except Exception as ex:
             log("Could not close the project: " + str(ex))
             return False
+
+
+# ===========================================================================
+# Text search helpers
+# ===========================================================================
+
+# Object kinds that normally have an implementation; when it is missing, the body is
+# graphical (FBD/LD/CFC/SFC) and was not searched.
+_KINDS_WITH_BODY = ("PRG", "FB", "FUN", "METHOD", "ACTION", "TRANSITION", "ACCESSOR")
+
+
+def _member_entries(owner, pou_name, prefix):
+    for member in owner.MemberObjects():
+        chain = prefix + member.Name
+        yield member.Type, pou_name, chain, member
+        for entry in _member_entries(member, pou_name, chain + u"."):
+            yield entry
+
+
+def _search_section(regex, text, ignore_comments, max_results, matches, where):
+    """Append one match per matching line. Returns False once max_results is exceeded."""
+    haystack = _mask(text)[0] if ignore_comments else text
+    line_starts = None
+    last_line = 0
+
+    for match in regex.finditer(haystack):
+        if line_starts is None:
+            line_starts = [0] + [m.end() for m in re.finditer(u"\n", text)]
+        line = bisect.bisect_right(line_starts, match.start())
+        if line == last_line:
+            continue
+        last_line = line
+
+        if len(matches) >= max_results:
+            return False
+
+        start = line_starts[line - 1]
+        end = text.find(u"\n", start)
+        entry = dict(where)
+        entry["line"] = line
+        entry["text"] = text[start:end if end >= 0 else len(text)].strip()[:400]
+        matches.append(entry)
+
+    return True
+
+
+# ===========================================================================
+# Task configuration helpers
+# ===========================================================================
+
+def _task_attr(task, name):
+    """A task property as text; None when missing or empty."""
+    try:
+        value = getattr(task, name)
+    except Exception:
+        return None
+    if value is None:
+        return None
+    text = _squash(str(value))
+    return text or None
+
+
+def _task_info(task, path):
+    kind = _task_attr(task, "kind_of_task")
+    kind = kind.split(u".")[-1] if kind else None
+    interval = _task_attr(task, "interval")
+    unit = _task_attr(task, "interval_unit")
+    event = _task_attr(task, "event")
+    external_event = _task_attr(task, "external_event")
+    priority = _task_attr(task, "priority")
+    interval_ms = _interval_ms(interval, unit)
+
+    try:
+        pous = [_squash(str(p)) for p in task.pous]
+    except Exception:
+        # Older engines without task.pous: the POU calls are the task's children.
+        pous = [object_name(c) for c in _children(task)]
+
+    watchdog = None
+    try:
+        dog = task.watchdog
+        watchdog = {
+            "enabled": _flag(dog, "enabled"),
+            "time": _task_attr(dog, "time"),
+            "timeUnit": _task_attr(dog, "time_unit"),
+            "sensitivity": _task_attr(dog, "sensitivity"),
+        }
+    except Exception:
+        pass
+
+    parsed_priority = _try_int(priority) if priority else None
+    return {
+        "name": object_name(task),
+        "path": path,
+        "kind": kind,
+        "priority": parsed_priority if parsed_priority is not None else priority,
+        "interval": interval,
+        "intervalUnit": unit,
+        "intervalMs": interval_ms,
+        "event": event,
+        "externalEvent": external_event,
+        "trigger": _task_trigger(kind, interval_ms, interval, unit, event, external_event),
+        "watchdog": watchdog,
+        "pous": pous,
+    }
+
+
+_DURATION_PART_RE = re.compile(r"(\d+(?:\.\d+)?)(ms|us|ns|d|h|m|s)")
+_DURATION_MS = {
+    u"d": 86400000.0, u"h": 3600000.0, u"m": 60000.0, u"s": 1000.0,
+    u"ms": 1.0, u"us": 0.001, u"ns": 0.000001,
+}
+
+
+def _interval_ms(interval, unit):
+    """Task interval in milliseconds: "100" + "ms", "t#30ms", "T#1s500ms", ..."""
+    text = (interval or u"").strip().lower().replace(u"_", u"")
+    if not text:
+        return None
+
+    if u"#" in text:
+        body = text.split(u"#", 1)[1]
+        parts = _DURATION_PART_RE.findall(body)
+        if not parts or u"".join(n + part_unit for n, part_unit in parts) != body:
+            return None
+        total = sum(float(n) * _DURATION_MS[part_unit] for n, part_unit in parts)
+    else:
+        factor = _DURATION_MS.get((unit or u"ms").strip().lower())
+        if factor is None:
+            return None
+        try:
+            total = float(text) * factor
+        except ValueError:
+            return None
+
+    return int(total) if total == int(total) else total
+
+
+def _task_trigger(kind, interval_ms, interval, unit, event, external_event):
+    """Human-readable summary of what starts the task (per the CODESYS task types)."""
+    name = (kind or u"").lower()
+    if name == u"cyclic":
+        if interval_ms is not None:
+            return u"cyclic, every %s ms" % interval_ms
+        return u"cyclic, every " + (interval or u"?") + (u" " + unit if unit else u"")
+    if name == u"freewheeling":
+        return u"freewheeling (restarts as soon as the previous cycle ends)"
+    if name == u"event":
+        return u"event: rising edge of " + (event or u"<no variable set>")
+    if name == u"status":
+        return u"status: runs while " + (event or u"<no variable set>") + u" is TRUE"
+    if u"external" in name:
+        return u"external event: " + (external_event or u"<no event set>")
+    return kind
 
 
 # ===========================================================================

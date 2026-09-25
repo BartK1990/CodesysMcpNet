@@ -166,8 +166,47 @@ def test_round_trips():
           [(u"gA", u"BOOL", u"TRUE", u"c")])
 
 
+def test_name_filter():
+    print("GVL name filter")
+    names = [u"xFault", u"_Fault", u"RedundancyStateError", u"xRun"]
+    check("substring", [n for n in names if api.name_matcher(u"fault")(n)], [u"xFault", u"_Fault"])
+    check("wildcard", [n for n in names if api.name_matcher(u"x*")(n)], [u"xFault", u"xRun"])
+    check("single char", [n for n in names if api.name_matcher(u"x?un")(n)], [u"xRun"])
+
+
+def test_search():
+    print("Text search")
+    import re
+    text = u"a := 1;\n_Fault := TRUE; // _Fault set\n(* _Fault := FALSE; *)\nb := _Fault;"
+    where = {"pou": u"P"}
+
+    matches = []
+    api._search_section(re.compile(u"_Fault\\s*:=", re.I | re.M), text, False, 100, matches, where)
+    check("one hit per line, raw", [(m["line"], m["text"]) for m in matches],
+          [(2, u"_Fault := TRUE; // _Fault set"), (3, u"(* _Fault := FALSE; *)")])
+
+    matches = []
+    api._search_section(re.compile(u"_Fault\\s*:=", re.I | re.M), text, True, 100, matches, where)
+    check("ignore comments", [m["line"] for m in matches], [2])
+
+    matches = []
+    complete = api._search_section(re.compile(u"_Fault", re.M), text, False, 2, matches, where)
+    check("truncation", (complete, len(matches)), (False, 2))
+
+
+def test_interval():
+    print("Task interval")
+    check("plain ms", api._interval_ms(u"1000", u"ms"), 1000)
+    check("plain us", api._interval_ms(u"500", u"us"), 0.5)
+    check("time literal", api._interval_ms(u"t#30ms", u"ms"), 30)
+    check("compound literal", api._interval_ms(u"T#1s500ms", u"ms"), 1500)
+    check("garbage", api._interval_ms(u"t#abc", u"ms"), None)
+    check("empty", api._interval_ms(None, u"ms"), None)
+
+
 def main():
-    for test in (test_gvl, test_struct, test_enum, test_alias, test_pou_kind, test_round_trips):
+    for test in (test_gvl, test_struct, test_enum, test_alias, test_pou_kind, test_round_trips,
+                 test_name_filter, test_search, test_interval):
         test()
 
     print("")

@@ -30,18 +30,35 @@ public sealed class CodesysTools
         Run(() => _ops.GetStructureAsync(ct));
 
     [McpServerTool(Name = "pou_content")]
-    [Description("Full ST source (declaration + implementation) of a POU. Acts on the project configured via the settings page.")]
+    [Description("Full ST source (declaration + implementation) of a POU, or of one of its methods, actions, properties or transitions. Acts on the project configured via the settings page.")]
     public Task<JsonElement> PouContentAsync(
-        [Description("POU name. Use \"Parent.Child\" to target a method/action/property part.")] string name,
+        [Description("POU name or path. Use \"Parent.Member\" for a method/action/property/transition (e.g. \"FB_Motor.Reset\"), and \"Parent.Property.Get\" for a property accessor.")] string name,
         CancellationToken ct) =>
         Run(() => _ops.GetPouContentAsync(name, ct));
 
     [McpServerTool(Name = "gvl_content")]
-    [Description("Variables of a global variable list, with types and initial values. Acts on the project configured via the settings page.")]
+    [Description("Variables of a global variable list, with types and initial values. Pass a filter for large lists: the result then holds only matching variables and omits the full declaration text. Acts on the project configured via the settings page.")]
     public Task<JsonElement> GvlContentAsync(
         [Description("GVL name.")] string name,
-        CancellationToken ct) =>
-        Run(() => _ops.GetGvlContentAsync(name, ct));
+        [Description("Optional case-insensitive variable-name filter: a wildcard pattern (\"*Fault*\", \"x?Run\") or, without * or ?, a substring.")] string? filter = null,
+        CancellationToken ct = default) =>
+        Run(() => _ops.GetGvlContentAsync(name, filter, ct));
+
+    [McpServerTool(Name = "search_text")]
+    [Description("Search the declarations and implementations of all POUs (incl. methods, actions, properties, transitions), GVLs, DUTs and ENUMs. Returns one hit per matching line: POU, member, section, 1-based line number and the line text. Use a regex such as \"\\bxFault\\s*:=\" to find writes to a variable. Graphical (FBD/LD/CFC/SFC) bodies are not searchable and are listed in implementationNotTextual. Acts on the project configured via the settings page.")]
+    public Task<JsonElement> SearchTextAsync(
+        [Description("Text to find. Plain text unless regex is true.")] string pattern,
+        [Description("Treat pattern as a Python regular expression.")] bool regex = false,
+        [Description("Match case exactly (default: case-insensitive).")] bool caseSensitive = false,
+        [Description("Skip matches inside comments and pragmas.")] bool ignoreComments = false,
+        [Description("Maximum number of hits to return (1-5000, default 200). The result says when it was truncated.")] int? maxResults = null,
+        CancellationToken ct = default) =>
+        Run(() => _ops.SearchTextAsync(pattern, regex, caseSensitive, ignoreComments, maxResults, ct));
+
+    [McpServerTool(Name = "task_config")]
+    [Description("Task configuration of every application: per task its kind (Cyclic/Event/Status/Freewheeling/External), priority, interval (also normalized to ms), event variable or external event, watchdog, and the POUs it calls, in call order. Only the POUs attached directly to the task are listed, not what they call in turn. Acts on the project configured via the settings page.")]
+    public Task<JsonElement> TaskConfigAsync(CancellationToken ct) =>
+        Run(() => _ops.GetTaskConfigurationAsync(ct));
 
     [McpServerTool(Name = "dut_content")]
     [Description("Fields of a structure/union DUT. Acts on the project configured via the settings page.")]

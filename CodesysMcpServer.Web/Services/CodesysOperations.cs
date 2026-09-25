@@ -37,8 +37,39 @@ public sealed class CodesysOperations
     public Task<JsonElement> GetPouContentAsync(string name, CancellationToken ct) =>
         RunAsync("pou_read.py", new { projectPath = CurrentProjectPath, name }, ct);
 
-    public Task<JsonElement> GetGvlContentAsync(string name, CancellationToken ct) =>
-        RunAsync("gvl_read.py", new { projectPath = CurrentProjectPath, name }, ct);
+    public Task<JsonElement> GetGvlContentAsync(string name, string? filter, CancellationToken ct) =>
+        RunAsync(
+            "gvl_read.py",
+            new { projectPath = CurrentProjectPath, name, filter = string.IsNullOrWhiteSpace(filter) ? null : filter },
+            ct);
+
+    public Task<JsonElement> GetTaskConfigurationAsync(CancellationToken ct) =>
+        RunAsync("task_config.py", new { projectPath = CurrentProjectPath }, ct);
+
+    public const int MaxSearchResults = 5000;
+
+    public Task<JsonElement> SearchTextAsync(
+        string pattern, bool regex, bool caseSensitive, bool ignoreComments, int? maxResults, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(pattern))
+            throw new CodesysValidationException("A search pattern is required.");
+
+        if (maxResults is < 1 or > MaxSearchResults)
+            throw new CodesysValidationException($"maxResults must be between 1 and {MaxSearchResults}.");
+
+        return RunAsync(
+            "search_text.py",
+            new
+            {
+                projectPath = CurrentProjectPath,
+                pattern,
+                regex,
+                caseSensitive,
+                ignoreComments,
+                maxResults = maxResults ?? 200,
+            },
+            ct);
+    }
 
     public Task<JsonElement> GetDutContentAsync(string name, CancellationToken ct) =>
         RunAsync("dut_read.py", new { projectPath = CurrentProjectPath, name }, ct);

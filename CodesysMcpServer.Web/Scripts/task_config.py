@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-GET /gvl/content
+GET /tasks
 
-Returns every variable of a global variable list with its type, initial value,
-address, block qualifiers and comment.
+Returns every task configuration in the project: per task its kind, priority,
+interval, event / external-event trigger, watchdog and the POUs it calls (in call
+order).
 """
 
 from __future__ import print_function
@@ -22,16 +23,15 @@ from codesys_api import Application
 
 def handler(request):
     project_path = require(request, "projectPath")
-    name = require(request, "name")
 
     app = Application()
     project = app.OpenProject(project_path)
 
-    gvl = project.FindGvl(name)
-    content = gvl.Content(request.get("filter"))
-    log("Reading GVL '" + gvl.Path + "': " + str(len(content["variables"])) + " variable(s)")
+    result = project.TaskConfiguration()
+    for configuration in result["taskConfigurations"]:
+        log("Task configuration '%s': %d task(s)" % (configuration["path"], configuration["taskCount"]))
 
-    return content
+    return result
 
 
 mcp_io.run(handler)

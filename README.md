@@ -56,6 +56,7 @@ as input.
     gvl_read.py   gvl_create.py
     dut_read.py   dut_create.py
     enum_read.py  enum_create.py
+    search_text.py  task_config.py
 ```
 
 ## Settings page
@@ -97,10 +98,12 @@ Every operation below acts on the project configured on the [settings page](#set
 | Method | Route | Body / Query |
 |---|---|---|
 | GET  | `/structure`     | – |
-| GET  | `/pou/content`   | `name` |
-| GET  | `/gvl/content`   | `name` |
+| GET  | `/pou/content`   | `name` — a POU, or `Parent.Member` for a method/action/property/transition |
+| GET  | `/gvl/content`   | `name`, `filter?` (`*Fault*` wildcard or substring; omits the full declaration) |
 | GET  | `/dut/content`   | `name` |
 | GET  | `/enum/content`  | `name` |
+| GET  | `/search`        | `pattern`, `regex?`, `caseSensitive?`, `ignoreComments?`, `maxResults?` (default 200, max 5000) |
+| GET  | `/tasks`         | – (kind, priority, interval, event trigger, watchdog and called POUs per task) |
 | POST | `/pou/update`    | `{ pouName, newCode, newDeclaration? }` |
 | POST | `/pou/create`    | `{ name, type, language, returnType?, parentPath?, declaration?, implementation? }` |
 | POST | `/gvl/create`    | `{ name, parentPath?, variables?: [{name,type,initialValue?,comment?}] }` |
@@ -121,7 +124,7 @@ mid-run.
 
 ## MCP tools
 
-The same eleven operations are exposed as MCP tools at `POST /mcp` (Streamable HTTP
+The same thirteen operations are exposed as MCP tools at `POST /mcp` (Streamable HTTP
 transport), registered in [Program.cs](McpServer/Program.cs) via
 `AddMcpServer().WithHttpTransport().WithTools<CodesysTools>()` and implemented in
 [Mcp/CodesysTools.cs](McpServer/Mcp/CodesysTools.cs). Tool names and inputs mirror the
@@ -134,6 +137,8 @@ REST routes:
 | `gvl_content` | `GET /gvl/content` |
 | `dut_content` | `GET /dut/content` |
 | `enum_content` | `GET /enum/content` |
+| `search_text` | `GET /search` |
+| `task_config` | `GET /tasks` |
 | `pou_update` | `POST /pou/update` |
 | `pou_create` | `POST /pou/create` |
 | `gvl_create` | `POST /gvl/create` |
