@@ -4,6 +4,10 @@ using CodesysMcpServer.Web.Mcp;
 using CodesysMcpServer.Web.Models;
 using CodesysMcpServer.Web.Services;
 
+// Launched by a stdio-only MCP client: forward to the running HTTP server instead of hosting.
+if (StdioProxy.TryGetEndpoint(args, out var proxyEndpoint))
+    return await StdioProxy.RunAsync(proxyEndpoint);
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Host.UseWindowsService();
@@ -291,3 +295,4 @@ log.LogInformation(
     "Scripts are executed serially against a single CODESYS instance.");
 
 app.Run();
+return 0;
