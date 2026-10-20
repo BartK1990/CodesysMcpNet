@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using CodesysMcpServer.Web.Logging;
 using CodesysMcpServer.Web.Mcp;
@@ -32,6 +33,12 @@ builder.Logging.AddSimpleConsole(options =>
 builder.Logging.AddDebug();
 builder.Logging.AddFile(builder.Configuration.GetSection("FileLogging"));
 
+// Release version, set by <Version> in CodesysMcpServer.Web.csproj.
+var appVersion = typeof(Program).Assembly
+    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+    ?? typeof(Program).Assembly.GetName().Version?.ToString(3)
+    ?? "0.0.0";
+
 // ---------------------------------------------------------------------------
 // Services
 // ---------------------------------------------------------------------------
@@ -50,7 +57,7 @@ builder.Services.AddSwaggerGen(options =>
     options.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
     {
         Title = "CODESYS MCP Server",
-        Version = "v1",
+        Version = appVersion,
         Description = "Local HTTP API that drives a CODESYS project via the official Scripting Engine.",
     });
 });
@@ -150,11 +157,17 @@ static IResult ValidationProblemResult(CodesysValidationException ex) =>
 app.MapGet("/health", () => Results.Ok(new
 {
     status = "ok",
+    version = appVersion,
     utc = DateTimeOffset.UtcNow,
 }))
 .WithName("Health")
 .WithTags("Health")
 .WithSummary("Liveness check.");
+
+app.MapGet("/version", () => Results.Json(new { version = appVersion }))
+.WithName("Version")
+.WithTags("Health")
+.WithSummary("Release version of the running server.");
 
 // 0. Settings: CODESYS.exe path + selected project, edited from the page at "/" ----------
 app.MapGet("/settings", () => Results.Json(settings.GetCurrent()))
@@ -341,8 +354,8 @@ app.MapPost("/compile", (CompileRequest request, CancellationToken ct) =>
     .WithSummary("Generate code for every application in the project and return the compiler verdict.");
 
 log.LogInformation(
-    "CODESYS MCP server starting. REST on this Kestrel instance, MCP tools at /mcp. " +
-    "Scripts are executed serially against a single CODESYS instance.");
+    "CODESYS MCP server {Version} starting. REST on this Kestrel instance, MCP tools at /mcp. " +
+    "Scripts are executed serially against a single CODESYS instance.", appVersion);
 
 // Pay CODESYS start-up and project load in the background now rather than on the first call.
 app.Lifetime.ApplicationStarted.Register(() =>

@@ -1,0 +1,38 @@
+---
+title: CODESYS MCP Server
+description: Let AI assistants and scripts read, edit and compile your CODESYS V3 project.
+template: splash
+hero:
+  tagline: Read, edit and compile a CODESYS V3 project from Claude Code, OpenCode or any MCP client — or from plain REST calls.
+  image:
+    file: ../../assets/screenshots/settings-page.png
+    alt: The CODESYS MCP Server settings page
+  actions:
+    - text: Get started
+      link: getting-started/introduction/
+      icon: right-arrow
+    - text: Download
+      link: https://github.com/BartK1990/CodesysMcpNet/releases/latest
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+  <Card title="Native MCP server" icon="rocket">
+    A Streamable HTTP MCP endpoint at `/mcp` — no bridge needed. Thirteen tools to browse,
+    search, edit and compile the project.
+  </Card>
+  <Card title="Same operations over REST" icon="seti:json">
+    Every MCP tool has an equivalent JSON endpoint, documented in the built-in Swagger UI.
+  </Card>
+  <Card title="Official Scripting Engine" icon="setting">
+    All work is done by the CODESYS Scripting Engine itself, so the project stays exactly as
+    the IDE would leave it.
+  </Card>
+  <Card title="Fast, warm session" icon="approve-check">
+    CODESYS is started once and kept running with the project open: calls take seconds instead
+    of a minute.
+  </Card>
+</CardGrid>

@@ -1,0 +1,133 @@
+# Manual release: builds the Windows x64 and portable packages and publishes them as a
+# GitHub release tagged v<Version>, where <Version> is read from
+# CodesysMcpServer.Web/CodesysMcpServer.Web.csproj. Bump <Version> there before running.
+#
+#   x64      - framework-dependent win-x64 build; needs the ASP.NET Core 10 runtime installed.
+#   portable - self-contained single-file win-x64 build; unzip and run, nothing to install.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: Mark the release as a pre-release
+        type: boolean
+        default: false
+      draft:
+        description: Create the release as a draft
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  PROJECT: CodesysMcpServer.Web/CodesysMcpServer.Web.csproj
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Read version from project
+        id: version
+        shell: pwsh
+        run: |
+          [xml]$csproj = Get-Content $env:PROJECT
+          $version = ($csproj.Project.PropertyGroup | Where-Object { $_.Version } | Select-Object -First 1).Version
+          if (-not $version) { throw "No <Version> found in $env:PROJECT" }
+          $version = $version.Trim()
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Releasing version $version"
+
+      - name: Ensure the tag does not exist yet
+        shell: pwsh
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git fetch --tags --quiet
+          if (git tag --list $env:TAG) {
+            throw "Tag $env:TAG already exists. Bump <Version> in $env:PROJECT before releasing."
+          }
+
+      - name: Publish x64 (framework-dependent)
+        run: >
+          dotnet publish ${{ env.PROJECT }}
+          -c Release -r win-x64 --self-contained false
+          -o publish/x64
+
+      - name: Publish portable (self-contained, single file)
+        run: >
+          dotnet publish ${{ env.PROJECT }}
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -o publish/portable
+
+      - name: Package
+        id: package
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $x64 = "dist/CodesysMcpServer-$env:VERSION-win-x64.zip"
+          $portable = "dist/CodesysMcpServer-$env:VERSION-win-x64-portable.zip"
+          foreach ($dir in 'publish/x64', 'publish/portable') {
+            Get-ChildItem $dir -Filter *.pdb | Remove-Item
+            Copy-Item README.md, LICENSE.txt $dir
+          }
+          Compress-Archive -Path publish/x64/* -DestinationPath $x64
+          Compress-Archive -Path publish/portable/* -DestinationPath $portable
+          Get-ChildItem dist | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)" | Add-Content dist/SHA256SUMS.txt
+          }
+          Get-Content dist/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodesysMcpServer-${{ steps.version.outputs.version }}
+          path: dist/*
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          $notes = @"
+          ## Downloads
+
+          | Package | Requirements |
+          |---|---|
+          | ``CodesysMcpServer-$env:VERSION-win-x64.zip`` | Windows x64 with the [ASP.NET Core 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) installed |
+          | ``CodesysMcpServer-$env:VERSION-win-x64-portable.zip`` | Windows x64, nothing else — self-contained, unzip and run |
+
+          Unzip, run ``CodesysMcpServer.Web.exe`` and open http://127.0.0.1:5088/.
+          See the [documentation](https://bartk1990.github.io/CodesysMcpNet/) for setup.
+
+          "@
+          $ghArgs = @('release', 'create', $env:TAG) + @((Get-ChildItem dist).FullName) + @(
+                    '--title', "CODESYS MCP Server $env:VERSION",
+                    '--target', $env:GITHUB_SHA,
+                    '--notes', $notes, '--generate-notes')
+          if ($env:PRERELEASE -eq 'true') { $ghArgs += '--prerelease' }
+          if ($env:DRAFT -eq 'true') { $ghArgs += '--draft' }
+          gh @ghArgs

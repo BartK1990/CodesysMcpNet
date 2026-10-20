@@ -1,0 +1,86 @@
+---
+title: Settings page
+description: Everything on the web UI at http://127.0.0.1:5088/.
+---
+
+import { Image } from 'astro:assets';
+import settings from '../../../assets/screenshots/settings-page.png';
+import settingsDark from '../../../assets/screenshots/settings-page-dark.png';
+import badge from '../../../assets/screenshots/version-badge.png';
+import ready from '../../../assets/screenshots/session-ready.png';
+import busy from '../../../assets/screenshots/session-busy.png';
+import stopped from '../../../assets/screenshots/session-stopped.png';
+import browser from '../../../assets/screenshots/file-browser.png';
+import structure from '../../../assets/screenshots/project-structure.png';
+
+The server's web UI at [http://127.0.0.1:5088/](http://127.0.0.1:5088/) is where you choose
+**which CODESYS installation and which project** every MCP tool and REST endpoint acts on, and
+where you can see and control the CODESYS session.
+
+<Image src={settings} alt="The settings page" width="640" />
+
+The page follows your system's light/dark preference:
+
+<Image src={settingsDark} alt="The settings page in dark mode" width="640" />
+
+## Version
+
+The badge next to the title shows the version of the running server. It is the same value
+`GET /version` returns, and the one the release on GitHub is tagged with.
+
+<Image src={badge} alt="Version badge next to the page title" width="420" />
+
+## CODESYS session
+
+The card at the top shows the state of the persistent CODESYS instance (see
+[Persistent session](/CodesysMcpNet/guides/persistent-session/)). It refreshes on its own.
+
+| State | Meaning |
+|---|---|
+| **Stopped** | CODESYS is not running. **Start**, or the next call, launches it. |
+| **Starting…** | CODESYS is launching and opening the project (30–60 s). |
+| **Ready** | The project is open; calls are served in a second or two. |
+| **Busy** | A script is running; the card shows which one and for how long. |
+| **Stopping…** | The project is being closed. |
+| **Disabled** | `KeepSessionAlive` is off: every call starts its own CODESYS. |
+
+<Image src={ready} alt="Session card: Ready" width="640" />
+<Image src={busy} alt="Session card: Busy running compile.py" width="640" />
+<Image src={stopped} alt="Session card: Stopped" width="640" />
+
+**Stop** closes the project and ends CODESYS, which releases the `.project` file so you can open
+it in the CODESYS IDE. Changes that a failed request left unsaved are discarded.
+
+## CODESYS.exe path, project and profile
+
+- **CODESYS.exe path** — the `CODESYS.exe` of the installation to use.
+- **Project (.project) file path** — the project every tool and endpoint works on.
+- **CODESYS profile** — the profile CODESYS is started with (`--profile`). The list is read
+  from the selected installation; a saved profile that is no longer installed is shown as
+  *(not found)*.
+
+Under each path the page shows whether it exists on this machine (**Found** / **Not found on
+this machine**).
+
+**Browse…** opens a small file explorer that walks the server's own disks, filtered to `.exe`
+or `.project` files. (A browser can't hand a web page the real path of a file chosen in a
+native dialog, so the server lists its folders itself.)
+
+<Image src={browser} alt="File browser dialog" width="560" />
+
+**Save** validates both paths and writes them to `appsettings.production.json` next to the
+server executable. The change takes effect within a couple of seconds; a running session
+switches to the new project on the next call.
+
+## View project structure
+
+Shows the project tree as the server sees it: applications and folders, POUs with their type
+and language, GVLs with their variable count, DUTs and ENUMs.
+
+<Image src={structure} alt="Project structure tree" width="640" />
+
+## Swagger UI
+
+The REST API is documented interactively at
+[http://127.0.0.1:5088/swagger](http://127.0.0.1:5088/swagger) — see
+[REST API](/CodesysMcpNet/guides/rest-api/).

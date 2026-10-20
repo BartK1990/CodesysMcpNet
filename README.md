@@ -22,6 +22,12 @@ Every operation acts on **one** CODESYS executable and **one** project, picked o
 [settings page](#settings-page) served at `/` — no endpoint or tool takes a project path
 as input.
 
+📖 **Documentation** (installation, settings page walkthrough with screenshots, MCP client
+setup): <https://bartk1990.github.io/CodesysMcpNet/>
+
+⬇️ **Download**: [latest release](https://github.com/BartK1990/CodesysMcpNet/releases/latest) —
+`win-x64` (needs the ASP.NET Core 10 runtime) or `win-x64-portable` (self-contained, unzip and run).
+
 ## Layout
 
 ```
@@ -112,6 +118,7 @@ Every operation below acts on the project configured on the [settings page](#set
 | POST | `/enum/create`   | `{ name, values: ["Idle := 3","Busy"], baseType?, parentPath? }` |
 | POST | `/compile`       | `{ clean?, saveAfterCompile? }` |
 | GET  | `/health`        | – |
+| GET  | `/version`       | – (`{ "version": "1.0.0" }`) |
 | GET  | `/session`       | – (persistent CODESYS status) |
 | POST | `/session/start` | – (start CODESYS and open the project) |
 | POST | `/session/stop`  | – (stop CODESYS, releasing the project file) |
@@ -232,6 +239,25 @@ call below fails with `400` until that's done.
 ```bash
 curl http://127.0.0.1:5088/structure
 ```
+
+## Versioning and releases
+
+The release version is defined once, as `<Version>` in
+[CodesysMcpServer.Web.csproj](CodesysMcpServer.Web/CodesysMcpServer.Web.csproj). It is shown
+next to the title on the settings page, returned by `GET /version` and `GET /health`, and
+printed in the startup log.
+
+To release: bump `<Version>`, push, then run **Actions → Release → Run workflow**
+([.github/workflows/release.yml](.github/workflows/release.yml)). It builds the `win-x64`
+(framework-dependent) and `win-x64-portable` (self-contained single file) zips and publishes
+them as GitHub release `v<Version>`. It refuses to run if that tag already exists.
+
+## Documentation site
+
+The [Starlight](https://starlight.astro.build/) site in [docs/](docs/) is deployed to GitHub
+Pages by [.github/workflows/docs.yml](.github/workflows/docs.yml) on every push to `master`
+that touches `docs/`. Run it locally with `cd docs && npm ci && npm run dev`; regenerate the
+web UI screenshots with `npm run screenshots` while the server is running.
 
 ## Connecting from Claude Code, OpenCode, or any other MCP client
 
