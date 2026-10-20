@@ -11,6 +11,15 @@
 		<ApplicationIcon>wwwroot\favicon.ico</ApplicationIcon>
 	</PropertyGroup>
 
+	<!-- Release version: the single source of truth. Shown on the settings page (GET /version)
+	     and used by .github/workflows/release.yml as the release tag (v<Version>). Bump it here
+	     before running the release workflow. -->
+	<PropertyGroup>
+		<Version>1.0.0</Version>
+		<IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+		<Product>CODESYS MCP Server</Product>
+	</PropertyGroup>
+
 	<!-- The Python scripts are part of the deployable output. -->
 	<ItemGroup>
 		<Content Include="Scripts\**\*.py">

@@ -51,7 +51,16 @@
     border-radius: 12px;
     padding: 2rem;
   }
-  h1 { font-size: 1.25rem; margin: 0 0 0.25rem; }
+  h1 { font-size: 1.25rem; margin: 0 0 0.25rem; display: flex; align-items: baseline; gap: 0.6rem; }
+  .version {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.05rem 0.55rem;
+  }
+  .version:empty { display: none; }
   p.sub { color: var(--muted); margin: 0 0 1.75rem; }
   label { display: block; font-weight: 600; margin-bottom: 0.35rem; }
   .field { margin-bottom: 1.25rem; }
@@ -233,7 +242,7 @@
 </head>
 <body>
 <main>
-  <h1>CODESYS MCP Server</h1>
+  <h1>CODESYS MCP Server <span class="version" id="app-version" title="Server version"></span></h1>
   <p class="sub">
     The executable and project below are what every REST endpoint and MCP tool acts on.
     Saving writes <code>appsettings.production.json</code> next to the server and takes
@@ -338,6 +347,19 @@
     banner.className = kind;
   }
 
+  async function loadVersion() {
+    try {
+      const res = await fetch('/version');
+      if (!res.ok) return;
+      const data = await res.json();
+      const text = 'v' + data.version;
+      document.getElementById('app-version').textContent = text;
+      document.title = `CODESYS MCP Server ${text} — Settings`;
+    } catch {
+      // Version is informational only.
+    }
+  }
+
   async function loadCurrent() {
     try {
       const res = await fetch('/settings');
@@ -440,6 +462,7 @@
     }
   });
 
+  loadVersion();
   loadCurrent();
 
   // ---------------------------------------------------------------------

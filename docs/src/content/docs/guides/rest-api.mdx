@@ -1,0 +1,73 @@
+---
+title: REST API
+description: Call the same operations over plain HTTP/JSON.
+---
+
+import { Image } from 'astro:assets';
+import swagger from '../../../assets/screenshots/swagger.png';
+
+Every MCP tool has an equivalent REST endpoint on the same server. The interactive Swagger UI
+at [http://127.0.0.1:5088/swagger](http://127.0.0.1:5088/swagger) documents them and lets you
+try them out:
+
+<Image src={swagger} alt="Swagger UI listing the REST endpoints" />
+
+## Endpoints
+
+| Method | Route | Body / query |
+|---|---|---|
+| GET  | `/structure`     | – |
+| GET  | `/pou/content`   | `name` — a POU, or `Parent.Member` for a method/action/property/transition |
+| GET  | `/gvl/content`   | `name`, `filter?` (`*Fault*` wildcard or substring) |
+| GET  | `/dut/content`   | `name` |
+| GET  | `/enum/content`  | `name` |
+| GET  | `/search`        | `pattern`, `regex?`, `caseSensitive?`, `ignoreComments?`, `maxResults?` (default 200, max 5000) |
+| GET  | `/tasks`         | – |
+| POST | `/pou/update`    | `{ pouName, newCode, newDeclaration? }` |
+| POST | `/pou/create`    | `{ name, type, language, returnType?, parentPath?, declaration?, implementation? }` |
+| POST | `/gvl/create`    | `{ name, parentPath?, variables?: [{name,type,initialValue?,comment?}] }` |
+| POST | `/dut/create`    | `{ name, fields: [{name,type,initialValue?,comment?}], baseType?, parentPath? }` |
+| POST | `/enum/create`   | `{ name, values: ["Idle := 3","Busy"], baseType?, parentPath? }` |
+| POST | `/compile`       | `{ clean?, saveAfterCompile? }` |
+| GET  | `/session`       | – persistent CODESYS status |
+| POST | `/session/start` | – start CODESYS and open the project |
+| POST | `/session/stop`  | – stop CODESYS, releasing the project file |
+| GET  | `/settings`      | – current executable, project and profile |
+| POST | `/settings`      | `{ executablePath, projectPath, profile? }` |
+| GET  | `/health`        | – liveness, includes `version` |
+| GET  | `/version`       | – `{ "version": "1.0.0" }` |
+
+`type` accepts `PRG`, `FB`, `FUN`; `language` accepts `ST`, `IL`, `LD`, `FBD`, `SFC`, `CFC`.
+
+## Status codes
+
+| Code | Meaning |
+|---|---|
+| `200` | Success. |
+| `400` | Invalid request, no project configured, or the configured project file doesn't exist. |
+| `502` | The CODESYS script failed. The ProblemDetails body carries `script`, `exitCode`, `pythonTraceback` and `stderr`. |
+| `499` | The client disconnected while CODESYS was still working. |
+
+## Examples
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:5088/structure
+
+Invoke-RestMethod "http://127.0.0.1:5088/search?pattern=xFault&ignoreComments=true"
+
+Invoke-RestMethod http://127.0.0.1:5088/pou/create -Method Post -ContentType application/json -Body (@{
+  name = 'FB_Valve'; type = 'FB'; language = 'ST'
+  declaration = "FUNCTION_BLOCK FB_Valve`nVAR_INPUT`n  xOpen : BOOL;`nEND_VAR"
+} | ConvertTo-Json)
+
+Invoke-RestMethod http://127.0.0.1:5088/compile -Method Post -ContentType application/json -Body '{}'
+```
+
+curl:
+
+```bash
+curl "http://127.0.0.1:5088/pou/content?name=FB_Motor.Reset"
+curl -X POST http://127.0.0.1:5088/compile -H "Content-Type: application/json" -d "{\"saveAfterCompile\": true}"
+```

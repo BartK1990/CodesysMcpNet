@@ -1,0 +1,52 @@
+---
+title: First run
+description: Point the server at your CODESYS installation and project, then connect an AI assistant.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import settings from '../../../assets/screenshots/settings-page.png';
+import browser from '../../../assets/screenshots/file-browser.png';
+import structure from '../../../assets/screenshots/project-structure.png';
+
+Until a CODESYS executable and a project are configured, every tool and endpoint fails with
+`400 Bad Request`. Configure them once on the settings page:
+
+<Steps>
+
+1. Open [http://127.0.0.1:5088/](http://127.0.0.1:5088/) in a browser.
+
+2. In **CODESYS.exe path**, click **Browse…** and select `CODESYS.exe`, typically
+   `C:\Program Files\CODESYS 3.5.xx.x\CODESYS\Common\CODESYS.exe`.
+
+3. In **Project (.project) file path**, click **Browse…** and pick your project.
+
+   <Image src={browser} alt="The Browse… dialog listing .project files in C:\Projects\Conveyor" width="560" />
+
+4. Select the **CODESYS profile** that matches your installation. The list is read from
+   the installation you selected in step 2.
+
+5. Click **Save**. Both paths show **Found** and the change takes effect immediately — no
+   restart needed.
+
+   <Image src={settings} alt="Settings page with CODESYS.exe, project and profile filled in" width="640" />
+
+6. Click **Start** on the *CODESYS session* card (or just wait: the server starts CODESYS
+   automatically). The first start takes 30–60 seconds; the card turns **Ready** when the
+   project is open.
+
+7. Click **View project structure** to check that the server can read the project.
+
+   <Image src={structure} alt="Project structure tree with POUs, GVLs, DUTs and ENUMs" width="640" />
+
+8. [Connect your AI assistant](/CodesysMcpNet/guides/mcp-clients/), for example:
+
+   ```bash
+   claude mcp add --transport http codesys http://127.0.0.1:5088/mcp
+   ```
+
+</Steps>
+
+Try asking your assistant something like *"Show me the task configuration of the CODESYS
+project"* or *"Add an FB_Valve function block with Open/Close methods and compile the
+project"*.
