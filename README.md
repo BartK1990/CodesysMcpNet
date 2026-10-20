@@ -11,6 +11,7 @@ MCP tool call ──► Mcp/CodesysTools.cs /mcp ──┴─► CodesysOperatio
                                                                                                     │
                                     JSON envelope ◄── result file + stdout ◄───────────────────────┘
 ```
+<img width="649" height="800" alt="CodesysMcpIntro" src="https://github.com/user-attachments/assets/27fa8508-1fae-4da1-a442-8401e9313e9e" />
 
 `CodesysOperations` (see [Layout](#layout)) is the only place that knows how to turn a
 request into a script run — validation, script selection, payload shaping. The REST
