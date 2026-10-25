@@ -18,12 +18,32 @@ public sealed class CodesysOptions
     public string ExecutablePath { get; set; } =
         @"C:\Program Files\CODESYS 3.5.20.0\CODESYS\Common\CODESYS.exe";
 
+    /// <summary>Upper bound for <see cref="MaxProjects"/>.</summary>
+    public const int MaxProjectsLimit = 10;
+
     /// <summary>
-    /// Full path to the currently selected .project file. Every endpoint and MCP tool operates
-    /// on this project — set it via the settings page (<c>/</c>) or <c>POST /settings</c>,
-    /// which persists it to <c>appsettings.production.json</c> next to the running binary.
+    /// Full path to the default .project file. Every endpoint and MCP tool operates on this
+    /// project unless the caller names another configured one — set it via the settings page
+    /// (<c>/</c>) or <c>POST /settings</c>, which persists it to <c>appsettings.production.json</c>
+    /// next to the running binary.
     /// </summary>
     public string? ProjectPath { get; set; }
+
+    /// <summary>
+    /// How many projects can be configured at once (1 to <see cref="MaxProjectsLimit"/>). With 1
+    /// only <see cref="ProjectPath"/> is used. With more, <see cref="AdditionalProjectPaths"/> are
+    /// served too, each by its own CODESYS instance while <see cref="KeepSessionAlive"/> is on.
+    /// </summary>
+    public int MaxProjects { get; set; } = 1;
+
+    /// <summary>
+    /// Further .project files callers may select by name or path, besides the default
+    /// <see cref="ProjectPath"/>. Ignored beyond <see cref="MaxProjects"/> - 1 entries.
+    /// </summary>
+    public List<string> AdditionalProjectPaths { get; set; } = [];
+
+    /// <summary><see cref="MaxProjects"/> clamped to its valid range.</summary>
+    public int EffectiveMaxProjects => Math.Clamp(MaxProjects, 1, MaxProjectsLimit);
 
     /// <summary>Profile name passed to <c>--profile</c>. Leave empty to use the default profile.</summary>
     public string Profile { get; set; } = "CODESYS V3.5 SP20 Patch 0";
@@ -54,7 +74,8 @@ public sealed class CodesysOptions
 
     /// <summary>
     /// Keep one CODESYS instance running with the project open and send every request to it
-    /// (see <see cref="CodesysSession"/>), instead of starting CODESYS.exe per request. Start-up
+    /// (one instance per project when <see cref="MaxProjects"/> is above 1)
+    /// — see <see cref="CodesysSession"/> — instead of starting CODESYS.exe per request. Start-up
     /// and project load are then paid once instead of on every call. Only applies when
     /// <see cref="UseCodesys"/> is true.
     /// </summary>

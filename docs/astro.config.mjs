@@ -33,6 +33,7 @@ export default defineConfig({
             'guides/mcp-clients',
             'guides/rest-api',
             'guides/persistent-session',
+            'guides/multiple-projects',
             'guides/windows-service',
           ],
         },

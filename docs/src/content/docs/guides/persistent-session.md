@@ -17,6 +17,9 @@ request to that instance. Warm calls take a second or two.
   just as a failed one-shot run would.
 - A request that times out (`TimeoutSeconds`) kills the session; the next call starts a new one.
 - `SessionIdleMinutes` > 0 stops CODESYS after that many minutes without calls.
+- With [Max projects](/CodesysMcpNet/guides/multiple-projects/) above 1, every configured
+  project gets its own session (its own CODESYS instance), started, stopped and shown
+  separately.
 
 :::caution[The project is locked while the session runs]
 While the session runs, CODESYS holds the project open, so opening it in the CODESYS IDE at the

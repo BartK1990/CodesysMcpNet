@@ -1,8 +1,11 @@
 using System.Text.Json;
 using CodesysMcpServer.Web.Models;
-using Microsoft.Extensions.Options;
 
 namespace CodesysMcpServer.Web.Services;
+
+/// <summary>A configured project plus the state of its CODESYS session (<c>GET /projects</c>, <c>projects</c> tool).</summary>
+/// <param name="Session">Session state, as in <see cref="CodesysSessionStatus.State"/>.</param>
+public sealed record ProjectSummary(string Name, string Path, bool IsDefault, bool Exists, string Session);
 
 /// <summary>
 /// The one place that knows how to turn a request into a CODESYS script run. Both the REST
@@ -11,45 +14,53 @@ namespace CodesysMcpServer.Web.Services;
 /// validation, script selection and payload shaping live, so the two transports can never
 /// drift apart on what an operation actually does — only on how they report success/failure.
 ///
-/// Every operation acts on the single project configured via the settings page
-/// (<see cref="CodesysOptions.ProjectPath"/>) — callers no longer pass a project path in.
+/// Every operation acts on a project configured via the settings page: the default one
+/// (<see cref="CodesysOptions.ProjectPath"/>) unless the optional <c>project</c> argument names
+/// another configured project (see <see cref="ProjectCatalog.Resolve"/>). Callers can never pass
+/// an arbitrary project path in.
 /// </summary>
 public sealed class CodesysOperations
 {
     private readonly PythonRunner _runner;
-    private readonly IOptionsMonitor<CodesysOptions> _options;
+    private readonly ProjectCatalog _projects;
+    private readonly CodesysSessionPool _sessions;
 
-    public CodesysOperations(PythonRunner runner, IOptionsMonitor<CodesysOptions> options)
+    public CodesysOperations(PythonRunner runner, ProjectCatalog projects, CodesysSessionPool sessions)
     {
         _runner = runner;
-        _options = options;
+        _projects = projects;
+        _sessions = sessions;
     }
 
-    private string? CurrentProjectPath => _options.CurrentValue.ProjectPath;
+    public IReadOnlyList<ProjectSummary> ListProjects() =>
+        _projects.List()
+            .Select(p => new ProjectSummary(p.Name, p.Path, p.IsDefault, p.Exists, _sessions.GetStatus(p).State))
+            .ToList();
 
     /// <summary>Opens the project and nothing else — warms up the persistent CODESYS session.</summary>
-    public Task<JsonElement> OpenProjectAsync(CancellationToken ct) =>
-        RunAsync("ping.py", new { projectPath = CurrentProjectPath }, ct);
+    public Task<JsonElement> OpenProjectAsync(string? project, CancellationToken ct) =>
+        RunAsync("ping.py", project, projectPath => new { projectPath }, ct);
 
-    public Task<JsonElement> GetStructureAsync(CancellationToken ct) =>
-        RunAsync("structure.py", new { projectPath = CurrentProjectPath }, ct);
+    public Task<JsonElement> GetStructureAsync(string? project, CancellationToken ct) =>
+        RunAsync("structure.py", project, projectPath => new { projectPath }, ct);
 
-    public Task<JsonElement> GetPouContentAsync(string name, CancellationToken ct) =>
-        RunAsync("pou_read.py", new { projectPath = CurrentProjectPath, name }, ct);
+    public Task<JsonElement> GetPouContentAsync(string name, string? project, CancellationToken ct) =>
+        RunAsync("pou_read.py", project, projectPath => new { projectPath, name }, ct);
 
-    public Task<JsonElement> GetGvlContentAsync(string name, string? filter, CancellationToken ct) =>
+    public Task<JsonElement> GetGvlContentAsync(string name, string? filter, string? project, CancellationToken ct) =>
         RunAsync(
             "gvl_read.py",
-            new { projectPath = CurrentProjectPath, name, filter = string.IsNullOrWhiteSpace(filter) ? null : filter },
+            project,
+            projectPath => new { projectPath, name, filter = string.IsNullOrWhiteSpace(filter) ? null : filter },
             ct);
 
-    public Task<JsonElement> GetTaskConfigurationAsync(CancellationToken ct) =>
-        RunAsync("task_config.py", new { projectPath = CurrentProjectPath }, ct);
+    public Task<JsonElement> GetTaskConfigurationAsync(string? project, CancellationToken ct) =>
+        RunAsync("task_config.py", project, projectPath => new { projectPath }, ct);
 
     public const int MaxSearchResults = 5000;
 
     public Task<JsonElement> SearchTextAsync(
-        string pattern, bool regex, bool caseSensitive, bool ignoreComments, int? maxResults, CancellationToken ct)
+        string pattern, bool regex, bool caseSensitive, bool ignoreComments, int? maxResults, string? project, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(pattern))
             throw new CodesysValidationException("A search pattern is required.");
@@ -59,9 +70,10 @@ public sealed class CodesysOperations
 
         return RunAsync(
             "search_text.py",
-            new
+            project,
+            projectPath => new
             {
-                projectPath = CurrentProjectPath,
+                projectPath,
                 pattern,
                 regex,
                 caseSensitive,
@@ -71,21 +83,22 @@ public sealed class CodesysOperations
             ct);
     }
 
-    public Task<JsonElement> GetDutContentAsync(string name, CancellationToken ct) =>
-        RunAsync("dut_read.py", new { projectPath = CurrentProjectPath, name }, ct);
+    public Task<JsonElement> GetDutContentAsync(string name, string? project, CancellationToken ct) =>
+        RunAsync("dut_read.py", project, projectPath => new { projectPath, name }, ct);
 
-    public Task<JsonElement> GetEnumContentAsync(string name, CancellationToken ct) =>
-        RunAsync("enum_read.py", new { projectPath = CurrentProjectPath, name }, ct);
+    public Task<JsonElement> GetEnumContentAsync(string name, string? project, CancellationToken ct) =>
+        RunAsync("enum_read.py", project, projectPath => new { projectPath, name }, ct);
 
-    public Task<JsonElement> UpdatePouAsync(PouUpdateRequest request, CancellationToken ct)
+    public Task<JsonElement> UpdatePouAsync(PouUpdateRequest request, string? project, CancellationToken ct)
     {
         RequestValidator.Validate(request);
 
         return RunAsync(
             "pou_update.py",
-            new
+            project,
+            projectPath => new
             {
-                projectPath = CurrentProjectPath,
+                projectPath,
                 name = request.PouName,
                 implementation = request.NewCode,
                 declaration = request.NewDeclaration,
@@ -93,15 +106,16 @@ public sealed class CodesysOperations
             ct);
     }
 
-    public Task<JsonElement> CreatePouAsync(PouCreateRequest request, CancellationToken ct)
+    public Task<JsonElement> CreatePouAsync(PouCreateRequest request, string? project, CancellationToken ct)
     {
         RequestValidator.Validate(request);
 
         return RunAsync(
             "pou_create.py",
-            new
+            project,
+            projectPath => new
             {
-                projectPath = CurrentProjectPath,
+                projectPath,
                 name = request.Name,
                 type = request.Type,
                 language = request.Language,
@@ -113,15 +127,16 @@ public sealed class CodesysOperations
             ct);
     }
 
-    public Task<JsonElement> CreateGvlAsync(GvlCreateRequest request, CancellationToken ct)
+    public Task<JsonElement> CreateGvlAsync(GvlCreateRequest request, string? project, CancellationToken ct)
     {
         RequestValidator.Validate(request);
 
         return RunAsync(
             "gvl_create.py",
-            new
+            project,
+            projectPath => new
             {
-                projectPath = CurrentProjectPath,
+                projectPath,
                 name = request.Name,
                 parentPath = request.ParentPath,
                 variables = request.Variables?.Select(v => new
@@ -135,15 +150,16 @@ public sealed class CodesysOperations
             ct);
     }
 
-    public Task<JsonElement> CreateDutAsync(DutCreateRequest request, CancellationToken ct)
+    public Task<JsonElement> CreateDutAsync(DutCreateRequest request, string? project, CancellationToken ct)
     {
         RequestValidator.Validate(request);
 
         return RunAsync(
             "dut_create.py",
-            new
+            project,
+            projectPath => new
             {
-                projectPath = CurrentProjectPath,
+                projectPath,
                 name = request.Name,
                 baseType = request.BaseType,
                 parentPath = request.ParentPath,
@@ -158,15 +174,16 @@ public sealed class CodesysOperations
             ct);
     }
 
-    public Task<JsonElement> CreateEnumAsync(EnumCreateRequest request, CancellationToken ct)
+    public Task<JsonElement> CreateEnumAsync(EnumCreateRequest request, string? project, CancellationToken ct)
     {
         RequestValidator.Validate(request);
 
         return RunAsync(
             "enum_create.py",
-            new
+            project,
+            projectPath => new
             {
-                projectPath = CurrentProjectPath,
+                projectPath,
                 name = request.Name,
                 values = request.Values,
                 baseType = request.BaseType,
@@ -175,35 +192,31 @@ public sealed class CodesysOperations
             ct);
     }
 
-    public Task<JsonElement> CompileAsync(CompileRequest request, CancellationToken ct)
+    public Task<JsonElement> CompileAsync(CompileRequest request, string? project, CancellationToken ct)
     {
         RequestValidator.Validate(request);
 
         return RunAsync(
             "compile.py",
-            new
+            project,
+            projectPath => new
             {
-                projectPath = CurrentProjectPath,
+                projectPath,
                 clean = request.Clean,
                 save = request.SaveAfterCompile,
             },
             ct);
     }
 
-    private async Task<JsonElement> RunAsync(string script, object payload, CancellationToken ct)
+    private async Task<JsonElement> RunAsync(
+        string script, string? project, Func<string, object> payload, CancellationToken ct)
     {
-        var projectPath = CurrentProjectPath;
-
-        if (string.IsNullOrWhiteSpace(projectPath))
-        {
-            throw new CodesysValidationException(
-                "No project is configured. Set one on the settings page (/) or via POST /settings.");
-        }
+        var projectPath = _projects.Resolve(project).Path;
 
         if (!File.Exists(projectPath))
             throw new CodesysValidationException($"Project file not found: {projectPath}");
 
-        var result = await _runner.ExecuteAsync(script, payload, ct);
+        var result = await _runner.ExecuteAsync(script, projectPath, payload(projectPath), ct);
         return result.Data;
     }
 }

@@ -25,8 +25,9 @@ public sealed record ScriptResult(JsonElement Data, int ExitCode, TimeSpan Durat
 /// console and in the log files.
 ///
 /// With <see cref="CodesysOptions.KeepSessionAlive"/> the same request file is handed to the
-/// persistent <see cref="CodesysSession"/> instead of a fresh CODESYS.exe; the envelope comes
-/// back through the same result file, so everything after that point is shared.
+/// persistent <see cref="CodesysSession"/> of the request's project (see
+/// <see cref="CodesysSessionPool"/>) instead of a fresh CODESYS.exe; the envelope comes back
+/// through the same result file, so everything after that point is shared.
 /// </summary>
 public sealed class PythonRunner
 {
@@ -41,11 +42,12 @@ public sealed class PythonRunner
         WriteIndented = true,
     };
 
-    // CODESYS is effectively a single-instance desktop application: never run two scripts at once.
-    private static readonly SemaphoreSlim Gate = new(1, 1);
+    // One-shot runs: CODESYS is effectively a single-instance desktop application, never run
+    // two scripts at once. Session runs are serialized per session by CodesysSessionPool.
+    private static readonly SemaphoreSlim OneShotGate = new(1, 1);
 
     private readonly IOptionsMonitor<CodesysOptions> _optionsMonitor;
-    private readonly CodesysSession _session;
+    private readonly CodesysSessionPool _sessions;
     private readonly ILogger<PythonRunner> _logger;
     private readonly string _scriptsDirectory;
 
@@ -56,20 +58,24 @@ public sealed class PythonRunner
 
     public PythonRunner(
         IOptionsMonitor<CodesysOptions> options,
-        CodesysSession session,
+        CodesysSessionPool sessions,
         ILogger<PythonRunner> logger)
     {
         _optionsMonitor = options;
-        _session = session;
+        _sessions = sessions;
         _logger = logger;
         _scriptsDirectory = Path.IsPathRooted(Options.ScriptsDirectory)
             ? Options.ScriptsDirectory
             : Path.Combine(AppContext.BaseDirectory, Options.ScriptsDirectory);
     }
 
-    /// <summary>Runs a script with a strongly typed payload object (serialized to the request file).</summary>
-    public Task<ScriptResult> ExecuteAsync(string scriptName, object payload, CancellationToken ct = default) =>
-        ExecuteCoreAsync(scriptName, payload, extraArguments: null, ct);
+    /// <summary>
+    /// Runs a script with a strongly typed payload object (serialized to the request file).
+    /// <paramref name="projectPath"/> picks the persistent session; the payload names the
+    /// project the script itself opens.
+    /// </summary>
+    public Task<ScriptResult> ExecuteAsync(string scriptName, string projectPath, object payload, CancellationToken ct = default) =>
+        ExecuteCoreAsync(scriptName, projectPath, payload, extraArguments: null, ct);
 
     /// <summary>
     /// Runs a script with a plain argument list. The arguments are handed to the script as
@@ -77,12 +83,14 @@ public sealed class PythonRunner
     /// </summary>
     public Task<ScriptResult> ExecuteAsync(
         string scriptName,
+        string projectPath,
         IReadOnlyList<string> args,
         CancellationToken ct = default) =>
-        ExecuteCoreAsync(scriptName, new { args }, args, ct);
+        ExecuteCoreAsync(scriptName, projectPath, new { args }, args, ct);
 
     private async Task<ScriptResult> ExecuteCoreAsync(
         string scriptName,
+        string projectPath,
         object payload,
         IReadOnlyList<string>? extraArguments,
         CancellationToken ct)
@@ -96,15 +104,27 @@ public sealed class PythonRunner
 
         await WriteRequestFileAsync(requestPath, resultPath, Path.GetFileName(scriptPath), payload, ct);
 
-        await Gate.WaitAsync(ct);
         try
         {
             using var scope = _logger.BeginScope($"script={scriptName} id={correlation[..8]}");
 
-            if (!_session.Enabled)
-                return await RunProcessAsync(scriptName, scriptPath, requestPath, resultPath, extraArguments, ct);
+            if (!_sessions.Enabled)
+            {
+                await OneShotGate.WaitAsync(ct);
+                try
+                {
+                    return await RunProcessAsync(scriptName, scriptPath, requestPath, resultPath, extraArguments, ct);
+                }
+                finally
+                {
+                    OneShotGate.Release();
+                }
+            }
 
-            var elapsed = await _session.RunAsync(scriptName, _scriptsDirectory, workDirectory, requestPath, resultPath, ct);
+            var elapsed = await _sessions.RunAsync(
+                projectPath,
+                session => session.RunAsync(scriptName, _scriptsDirectory, workDirectory, requestPath, resultPath, ct),
+                ct);
             _logger.LogInformation("Script {Script} finished in the CODESYS session after {Elapsed:0.00}s", scriptName, elapsed.TotalSeconds);
 
             var envelope = await ReadEnvelopeAsync(resultPath, stdout: string.Empty, ct);
@@ -112,8 +132,6 @@ public sealed class PythonRunner
         }
         finally
         {
-            Gate.Release();
-
             if (!Options.KeepTempFiles)
             {
                 TryDelete(requestPath);
@@ -214,49 +232,6 @@ public sealed class PythonRunner
 
         var envelope = await ReadEnvelopeAsync(resultPath, stdout.ToString(), ct);
         return Interpret(scriptName, envelope, exitCode, stderr.ToString(), stopwatch.Elapsed);
-    }
-
-    /// <summary>Stops the persistent session once any in-flight script has finished.</summary>
-    public async Task StopSessionAsync(CancellationToken ct)
-    {
-        _session.MarkStopping();
-
-        try
-        {
-            await Gate.WaitAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            // The caller stopped waiting, but the stop request stands.
-            _ = StopSessionInBackgroundAsync();
-            throw;
-        }
-
-        try
-        {
-            await _session.StopAsync();
-        }
-        finally
-        {
-            Gate.Release();
-        }
-    }
-
-    private async Task StopSessionInBackgroundAsync()
-    {
-        await Gate.WaitAsync();
-        try
-        {
-            await _session.StopAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Stopping the CODESYS session failed");
-        }
-        finally
-        {
-            Gate.Release();
-        }
     }
 
     private static ScriptResult Interpret(

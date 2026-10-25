@@ -18,9 +18,10 @@ request into a script run — validation, script selection, payload shaping. The
 endpoints and the MCP tools are both thin adapters on top of it that differ only in how
 they report success/failure for their protocol.
 
-Every operation acts on **one** CODESYS executable and **one** project, picked on the
-[settings page](#settings-page) served at `/` — no endpoint or tool takes a project path
-as input.
+Every operation acts on **one** CODESYS executable and, by default, **one** project, picked
+on the [settings page](#settings-page) served at `/` — no endpoint or tool takes an arbitrary
+project path as input. Raise `MaxProjects` to configure several projects; callers then pick
+one of those by name (see [Multiple projects](#multiple-projects)).
 
 📖 **Documentation** (installation, settings page walkthrough with screenshots, MCP client
 setup): <https://bartk1990.github.io/CodesysMcpNet/>
@@ -43,7 +44,9 @@ setup): <https://bartk1990.github.io/CodesysMcpNet/>
     CodesysOperations.cs     Shared implementation: validation, script selection, payload shaping
     PythonRunner.cs          Process host, live log streaming, JSON envelope handling
     CodesysSession.cs        Persistent CODESYS instance fed through a queue directory
-    CodesysOptions.cs        Configuration ("Codesys" section), incl. ExecutablePath + ProjectPath
+    CodesysOptions.cs        Configuration ("Codesys" section), incl. ExecutablePath + ProjectPath + MaxProjects
+    ProjectCatalog.cs        Configured projects; resolves a call's optional "project" argument
+    CodesysSessionPool.cs    One persistent session (+ gate) per project, stops removed ones
     AppSettingsWriter.cs     Reads/writes appsettings.production.json for the settings page
     SettingsSnapshot.cs      Response shape of GET/POST /settings
     FileBrowserService.cs    Drive/folder/file listing backing the settings page's path picker
@@ -93,14 +96,16 @@ walks the server's own filesystem (drives → folders → files, filtered to `.e
 
 | Method | Route | Body / Query |
 |---|---|---|
-| GET  | `/settings` | – → `{ executablePath, projectPath, executableExists, projectExists }` |
-| POST | `/settings` | `{ executablePath, projectPath }` → same shape, `400` if either path doesn't exist |
+| GET  | `/settings` | – → `{ executablePath, projectPath, profile, executableExists, projectExists, maxProjects, maxProjectsLimit, additionalProjects: [{path, exists}] }` |
+| POST | `/settings` | `{ executablePath, projectPath, profile?, maxProjects?, additionalProjectPaths? }` → same shape, `400` if a path doesn't exist or there are more projects than `maxProjects` |
 | GET  | `/files` | `path?` (omit for the drive list), `filter?` (e.g. `.exe`) → `{ path, parent, entries: [{name, fullPath, isDirectory}] }` |
 
 ## Endpoints
 
-Every operation below acts on the project configured on the [settings page](#settings-page)
-— none of them take a project path as input anymore.
+Every operation below acts on the default project configured on the
+[settings page](#settings-page). Each one (and the `/session` routes) also takes an optional
+`project` query parameter naming another configured project — see
+[Multiple projects](#multiple-projects).
 
 | Method | Route | Body / Query |
 |---|---|---|
@@ -119,12 +124,14 @@ Every operation below acts on the project configured on the [settings page](#set
 | POST | `/compile`       | `{ clean?, saveAfterCompile? }` |
 | GET  | `/health`        | – |
 | GET  | `/version`       | – (`{ "version": "1.0.0" }`) |
+| GET  | `/projects`      | – (configured projects, default first, with their session state) |
+| GET  | `/sessions`      | – (session status of every configured project) |
 | GET  | `/session`       | – (persistent CODESYS status) |
 | POST | `/session/start` | – (start CODESYS and open the project) |
 | POST | `/session/stop`  | – (stop CODESYS, releasing the project file) |
 
-Status codes: `200` success, `400` invalid request, no project configured, or the
-configured project file doesn't exist, `502` the script failed (the ProblemDetails body
+Status codes: `200` success, `400` invalid request, no project configured, `project` names
+no configured project, or the project file doesn't exist, `502` the script failed (the ProblemDetails body
 carries `script`, `exitCode`, `pythonTraceback` and `stderr`), `499` client disconnected
 mid-run.
 
@@ -153,6 +160,10 @@ REST routes:
 | `dut_create` | `POST /dut/create` |
 | `enum_create` | `POST /enum/create` |
 | `compile` | `POST /compile` |
+| `projects` | `GET /projects` |
+
+Every tool except `projects` takes an optional `project` argument (see
+[Multiple projects](#multiple-projects)).
 
 A failed validation or script run raises `McpException`, so its message reaches the
 calling model as a tool error — the same detail the REST layer puts in a ProblemDetails
@@ -165,7 +176,9 @@ REST-specific; on the MCP side the message text carries the traceback instead).
 "Codesys": {
   "UseCodesys": true,                     // false -> run scripts under a plain interpreter
   "ExecutablePath": "C:\\Program Files\\CODESYS 3.5.20.0\\CODESYS\\Common\\CODESYS.exe",
-  "ProjectPath": null,                    // the .project every endpoint/tool acts on
+  "ProjectPath": null,                    // the default .project every endpoint/tool acts on
+  "MaxProjects": 1,                       // >1 allows AdditionalProjectPaths (one CODESYS each)
+  "AdditionalProjectPaths": [],           // further projects, selected per call via "project"
   "Profile": "CODESYS V3.5 SP20 Patch 0", // must match an installed profile
   "NoUserInterface": true,
   "PythonExecutablePath": "python",       // only used when UseCodesys is false
@@ -179,8 +192,8 @@ REST-specific; on the MCP side the message text carries the traceback instead).
 }
 ```
 
-`ExecutablePath` and `ProjectPath` are the two fields the [settings page](#settings-page)
-edits, and it writes them to `appsettings.production.json`, not this file — treat the
+`ExecutablePath`, `ProjectPath`, `Profile`, `MaxProjects` and `AdditionalProjectPaths` are
+the fields the [settings page](#settings-page) edits, and it writes them to `appsettings.production.json`, not this file — treat the
 values above as first-run defaults / a template for that generated file, not something you
 need to hand-edit day to day.
 
@@ -190,15 +203,16 @@ name is what `CODESYS.exe --profile=` expects (see the CODESYS installation dire
 `WorkDirectory` should contain **no spaces**: CODESYS splits its `--scriptargs` value on
 whitespace. The server logs a warning if it does.
 
-Every script runs serialized behind a semaphore, because CODESYS is effectively a
-single-instance application.
+Scripts for one project run serialized behind a semaphore, because a CODESYS instance can
+only run one script at a time. One-shot runs (`KeepSessionAlive: false`) are serialized
+globally.
 
 ### Persistent session
 
 Starting CODESYS and opening a project takes 30–60 s, so by default (`KeepSessionAlive`)
 the server does it once: `CODESYS.exe --noUI --runscript=session_host.py` stays running
 with the project open, and each request is a JSON file moved into
-`<WorkDirectory>\session\`, which the host claims, runs and answers through the usual
+`<WorkDirectory>\sessions\<key>\`, which the host claims, runs and answers through the usual
 result file. Warm calls take a second or two instead of the full start-up.
 
 * The first request (or server start-up, with `StartSessionOnStartup`) pays the start-up.
@@ -213,6 +227,22 @@ result file. Warm calls take a second or two instead of the full start-up.
   process disappears.
 * Edits to `codesys_api.py` / `mcp_io.py` take effect after `POST /session/stop`
   (individual operation scripts are re-read on every call).
+
+### Multiple projects
+
+`MaxProjects` (default `1`, up to `10`) controls how many projects can be configured. With 1
+nothing changes: there is one project and one shared session. Raise it and add
+`AdditionalProjectPaths` (or use **Max projects** / **Additional projects** on the settings
+page), and:
+
+* every tool and endpoint takes an optional `project` — a configured project's file name
+  without `.project` (case-insensitive) or its full path; omitted means `ProjectPath`. Only
+  configured projects can be selected. The `projects` tool / `GET /projects` lists them.
+* with `KeepSessionAlive`, each project gets **its own CODESYS instance** with the project kept
+  open: no reload when alternating between projects, and calls for different projects run in
+  parallel (calls for the same project are still serialized). Each instance costs memory.
+* `StartSessionOnStartup` warms up every configured project; removing one (or lowering
+  `MaxProjects`) stops its session and releases the file.
 
 The [settings page](#settings-page) shows the session state (Stopped / Starting / Ready /
 Busy / Stopping, with the running script, uptime and last error) and has **Start** / **Stop**

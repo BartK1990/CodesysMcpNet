@@ -110,6 +110,20 @@
     font-weight: 500;
   }
   #structure-button { margin-left: 0.6rem; }
+  input[type=number] {
+    width: 6rem;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+  }
+  .hint { font-size: 0.85rem; color: var(--muted); margin-top: 0.35rem; }
+  #additional-field[hidden] { display: none; }
+  .project-row { margin-bottom: 0.5rem; }
+  .project-row .status { margin-top: 0.2rem; }
+  #add-project { margin-top: 0.25rem; }
 
   /* Persistent CODESYS session card */
   #session-card {
@@ -141,6 +155,8 @@
   .session-actions { margin-left: auto; display: flex; gap: 0.5rem; }
   .session-actions button { padding: 0.4rem 1rem; }
   #session-detail { margin-top: 0.35rem; }
+  #session-project { width: auto; max-width: 14rem; padding: 0.3rem 0.5rem; font-size: 0.85rem; }
+  #session-project[hidden] { display: none; }
   #session-error { margin-top: 0.35rem; font-size: 0.85rem; color: var(--err); white-space: pre-wrap; }
   #session-error:empty { display: none; }
 
@@ -244,7 +260,7 @@
 <main>
   <h1>CODESYS MCP Server <span class="version" id="app-version" title="Server version"></span></h1>
   <p class="sub">
-    The executable and project below are what every REST endpoint and MCP tool acts on.
+    The executable and project(s) below are what every REST endpoint and MCP tool acts on.
     Saving writes <code>appsettings.production.json</code> next to the server and takes
     effect immediately.
   </p>
@@ -254,6 +270,7 @@
       <span class="session-dot" id="session-dot"></span>
       <span class="session-title">CODESYS session</span>
       <span class="session-state" id="session-state">…</span>
+      <select id="session-project" title="Project whose session is shown" hidden></select>
       <div class="session-actions">
         <button type="button" id="session-start">Start</button>
         <button type="button" class="btn-secondary" id="session-stop">Stop</button>
@@ -275,13 +292,30 @@
     </div>
 
     <div class="field">
-      <label for="projectPath">Project (.project) file path</label>
+      <label for="projectPath" id="projectPath-label">Project (.project) file path</label>
       <div class="field-row">
         <input type="text" id="projectPath" name="projectPath"
                placeholder="C:\demo\Plc.project" autocomplete="off">
         <button type="button" class="btn-secondary browse-btn" data-target="projectPath" data-filter=".project">Browse…</button>
       </div>
       <div class="status" id="projectPath-status">&nbsp;</div>
+    </div>
+
+    <div class="field">
+      <label for="maxProjects">Max projects</label>
+      <input type="number" id="maxProjects" name="maxProjects" min="1" max="10" value="1">
+      <div class="hint">
+        1 serves only the project above. Raise it to add more projects; tools and endpoints then
+        take an optional <code>project</code> argument, and each project gets its own CODESYS
+        instance (more memory, but no reload when switching between them).
+      </div>
+    </div>
+
+    <div class="field" id="additional-field" hidden>
+      <label>Additional projects</label>
+      <div id="additional-projects"></div>
+      <button type="button" class="btn-secondary" id="add-project">Add project</button>
+      <div class="status" id="additional-status">&nbsp;</div>
     </div>
 
     <div class="field">
@@ -324,6 +358,7 @@
     executablePath: document.getElementById('executablePath'),
     projectPath: document.getElementById('projectPath'),
     profile: document.getElementById('profile'),
+    maxProjects: document.getElementById('maxProjects'),
   };
   const statuses = {
     executablePath: document.getElementById('executablePath-status'),
@@ -332,14 +367,100 @@
   };
 
   function showStatus(key, exists) {
-    const el = statuses[key];
-    if (!fields[key].value.trim()) {
+    showPathStatus(fields[key], statuses[key], exists);
+  }
+
+  function showPathStatus(input, el, exists) {
+    if (!input.value.trim()) {
       el.textContent = '\u00a0';
       el.className = 'status';
       return;
     }
     el.textContent = exists ? 'Found' : 'Not found on this machine';
     el.className = 'status ' + (exists ? 'ok' : 'err');
+  }
+
+  // ---------------------------------------------------------------------
+  // Additional projects: only shown when Max projects is above 1. The
+  // project field above stays the default one (used when a call names none).
+  // ---------------------------------------------------------------------
+  const additionalField = document.getElementById('additional-field');
+  const additionalList = document.getElementById('additional-projects');
+  const additionalStatus = document.getElementById('additional-status');
+  const addProjectButton = document.getElementById('add-project');
+  const projectLabel = document.getElementById('projectPath-label');
+  let additionalRows = [];
+
+  function maxProjects() {
+    const n = parseInt(fields.maxProjects.value, 10);
+    return Number.isFinite(n) ? Math.min(Math.max(n, 1), parseInt(fields.maxProjects.max, 10)) : 1;
+  }
+
+  function addProjectRow(path, exists) {
+    const row = document.createElement('div');
+    row.className = 'project-row';
+
+    const line = document.createElement('div');
+    line.className = 'field-row';
+
+    const input = Object.assign(document.createElement('input'), {
+      type: 'text',
+      placeholder: 'C:\\demo\\Other.project',
+      autocomplete: 'off',
+      value: path || '',
+    });
+    const status = Object.assign(document.createElement('div'), { className: 'status', textContent: '\u00a0' });
+
+    const browse = Object.assign(document.createElement('button'), {
+      type: 'button', className: 'btn-secondary', textContent: 'Browse…',
+    });
+    browse.addEventListener('click', () => openBrowser(input, status, '.project', 'Select project file'));
+
+    const remove = Object.assign(document.createElement('button'), {
+      type: 'button', className: 'btn-secondary', textContent: 'Remove',
+    });
+    const entry = { row, input, status };
+    remove.addEventListener('click', () => {
+      additionalRows = additionalRows.filter((r) => r !== entry);
+      row.remove();
+      updateMultiProjectUi();
+    });
+
+    line.append(input, browse, remove);
+    row.append(line, status);
+    additionalList.appendChild(row);
+    additionalRows.push(entry);
+    if (exists !== undefined) showPathStatus(input, status, exists);
+    return entry;
+  }
+
+  function updateMultiProjectUi() {
+    const max = maxProjects();
+    const multi = max > 1;
+    additionalField.hidden = !multi && additionalRows.length === 0;
+    projectLabel.textContent = multi ? 'Default project (.project) file path' : 'Project (.project) file path';
+    addProjectButton.disabled = additionalRows.length >= max - 1;
+
+    if (additionalRows.length > max - 1) {
+      additionalStatus.textContent = `Max projects is ${max}: remove ${additionalRows.length - (max - 1)} project(s) or raise the limit.`;
+      additionalStatus.className = 'status err';
+    } else {
+      additionalStatus.textContent = multi ? `${additionalRows.length} of ${max - 1} additional project(s).` : '\u00a0';
+      additionalStatus.className = 'status';
+    }
+  }
+
+  addProjectButton.addEventListener('click', () => {
+    addProjectRow('').input.focus();
+    updateMultiProjectUi();
+  });
+  fields.maxProjects.addEventListener('input', updateMultiProjectUi);
+
+  function renderAdditional(list) {
+    additionalList.innerHTML = '';
+    additionalRows = [];
+    for (const p of list || []) addProjectRow(p.path, p.exists);
+    updateMultiProjectUi();
   }
 
   function showBanner(kind, message) {
@@ -369,6 +490,9 @@
       fields.projectPath.value = data.projectPath || '';
       showStatus('executablePath', data.executableExists);
       showStatus('projectPath', data.projectExists);
+      fields.maxProjects.max = data.maxProjectsLimit || 10;
+      fields.maxProjects.value = data.maxProjects || 1;
+      renderAdditional(data.additionalProjects);
       await refreshProfiles(data.profile || '');
     } catch {
       showBanner('err', 'Could not load current settings.');
@@ -440,6 +564,8 @@
           executablePath: fields.executablePath.value.trim(),
           projectPath: fields.projectPath.value.trim(),
           profile: fields.profile.value.trim(),
+          maxProjects: maxProjects(),
+          additionalProjectPaths: additionalRows.map((r) => r.input.value.trim()).filter(Boolean),
         }),
       });
 
@@ -454,7 +580,10 @@
 
       showStatus('executablePath', data.executableExists);
       showStatus('projectPath', data.projectExists);
+      fields.maxProjects.value = data.maxProjects;
+      renderAdditional(data.additionalProjects);
       showBanner('ok', 'Saved.');
+      refreshProjects();
     } catch {
       showBanner('err', 'Save failed: could not reach the server.');
     } finally {
@@ -594,7 +723,7 @@
     structureTree.innerHTML = '';
 
     try {
-      const res = await fetch('/structure');
+      const res = await fetch('/structure' + projectQuery());
       const data = await res.json();
 
       if (!res.ok) {
@@ -630,6 +759,36 @@
   const sessionError = document.getElementById('session-error');
   const sessionStart = document.getElementById('session-start');
   const sessionStop = document.getElementById('session-stop');
+  const sessionProject = document.getElementById('session-project');
+
+  // Which project the session card (and "View project structure") acts on. The selector only
+  // appears when more than one project is configured; '' means the default project.
+  function projectQuery() {
+    return sessionProject.value ? '?' + new URLSearchParams({ project: sessionProject.value }) : '';
+  }
+
+  async function refreshProjects() {
+    try {
+      const res = await fetch('/projects');
+      if (!res.ok) return;
+      const list = await res.json();
+      const previous = sessionProject.value;
+      sessionProject.innerHTML = '';
+      for (const p of list) {
+        sessionProject.appendChild(new Option(p.isDefault ? `${p.name} (default)` : p.name, p.isDefault ? '' : p.path));
+      }
+      sessionProject.hidden = list.length < 2;
+      sessionProject.value = Array.from(sessionProject.options).some((o) => o.value === previous) ? previous : '';
+      refreshSession();
+    } catch {
+      // The session card reports connectivity problems itself.
+    }
+  }
+
+  sessionProject.addEventListener('change', () => {
+    structurePanel.classList.remove('open');
+    refreshSession();
+  });
 
   const STATE_LABELS = {
     disabled: 'Disabled',
@@ -701,7 +860,7 @@
     clearTimeout(sessionTimer);
     let state = 'stopped';
     try {
-      const res = await fetch('/session');
+      const res = await fetch('/session' + projectQuery());
       if (res.ok) state = renderSession(await res.json());
       else sessionDetail.textContent = 'Could not read the session state.';
     } catch {
@@ -719,7 +878,7 @@
     refreshSession();
 
     try {
-      const res = await fetch('/session/' + action, { method: 'POST' });
+      const res = await fetch('/session/' + action + projectQuery(), { method: 'POST' });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         sessionError.textContent = data.detail || `${action === 'start' ? 'Start' : 'Stop'} failed (HTTP ${res.status}).`;
@@ -740,6 +899,7 @@
   });
 
   refreshSession();
+  refreshProjects();
 
   // ---------------------------------------------------------------------
   // Browse… file picker. There is no way for a web page to learn the real
@@ -754,16 +914,18 @@
   const browserList = document.getElementById('browser-list');
   const browserCancel = document.getElementById('browser-cancel');
 
-  let activeTarget = null;
+  let activeInput = null;    // the text field a picked file goes into
+  let activeStatus = null;   // its "Found / Not found" line
   let activeFilter = null;
 
-  function openBrowser(target, filter) {
-    activeTarget = target;
+  function openBrowser(input, status, filter, title) {
+    activeInput = input;
+    activeStatus = status;
     activeFilter = filter;
-    browserTitle.textContent = target === 'executablePath' ? 'Select CODESYS.exe' : 'Select project file';
+    browserTitle.textContent = title;
     browserBackdrop.classList.add('open');
 
-    const current = fields[target].value.trim();
+    const current = input.value.trim();
     const cut = Math.max(current.lastIndexOf('\\'), current.lastIndexOf('/'));
     browseTo(cut > 0 ? current.slice(0, cut) : null);
   }
@@ -860,10 +1022,10 @@
       if (entry.isDirectory) {
         browseTo(entry.fullPath);
       } else {
-        fields[activeTarget].value = entry.fullPath;
-        showStatus(activeTarget, true);
+        activeInput.value = entry.fullPath;
+        showPathStatus(activeInput, activeStatus, true);
         closeBrowser();
-        if (activeTarget === 'executablePath') refreshProfiles();
+        if (activeInput === fields.executablePath) refreshProfiles();
       }
     });
     return row;
@@ -872,7 +1034,9 @@
   fields.executablePath.addEventListener('change', () => refreshProfiles());
 
   document.querySelectorAll('.browse-btn').forEach((btn) => {
-    btn.addEventListener('click', () => openBrowser(btn.dataset.target, btn.dataset.filter));
+    const target = btn.dataset.target;
+    const title = target === 'executablePath' ? 'Select CODESYS.exe' : 'Select project file';
+    btn.addEventListener('click', () => openBrowser(fields[target], statuses[target], btn.dataset.filter, title));
   });
 
   browserCancel.addEventListener('click', closeBrowser);

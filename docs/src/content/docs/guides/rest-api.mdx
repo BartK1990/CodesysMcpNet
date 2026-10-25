@@ -14,6 +14,11 @@ try them out:
 
 ## Endpoints
 
+Every operation below, and the `/session` routes, take an optional `project` query parameter
+(a configured project's name or full path, e.g. `?project=Line2`) — see
+[Multiple projects](/CodesysMcpNet/guides/multiple-projects/). Without it they act on the
+default project.
+
 | Method | Route | Body / query |
 |---|---|---|
 | GET  | `/structure`     | – |
@@ -29,11 +34,13 @@ try them out:
 | POST | `/dut/create`    | `{ name, fields: [{name,type,initialValue?,comment?}], baseType?, parentPath? }` |
 | POST | `/enum/create`   | `{ name, values: ["Idle := 3","Busy"], baseType?, parentPath? }` |
 | POST | `/compile`       | `{ clean?, saveAfterCompile? }` |
+| GET  | `/projects`      | – configured projects with their session state |
+| GET  | `/sessions`      | – session status of every configured project |
 | GET  | `/session`       | – persistent CODESYS status |
 | POST | `/session/start` | – start CODESYS and open the project |
 | POST | `/session/stop`  | – stop CODESYS, releasing the project file |
 | GET  | `/settings`      | – current executable, project and profile |
-| POST | `/settings`      | `{ executablePath, projectPath, profile? }` |
+| POST | `/settings`      | `{ executablePath, projectPath, profile?, maxProjects?, additionalProjectPaths? }` |
 | GET  | `/health`        | – liveness, includes `version` |
 | GET  | `/version`       | – `{ "version": "1.0.0" }` |
 
@@ -44,7 +51,7 @@ try them out:
 | Code | Meaning |
 |---|---|
 | `200` | Success. |
-| `400` | Invalid request, no project configured, or the configured project file doesn't exist. |
+| `400` | Invalid request, no project configured, `project` names no configured project, or the project file doesn't exist. |
 | `502` | The CODESYS script failed. The ProblemDetails body carries `script`, `exitCode`, `pythonTraceback` and `stderr`. |
 | `499` | The client disconnected while CODESYS was still working. |
 
