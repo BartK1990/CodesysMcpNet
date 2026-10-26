@@ -44,6 +44,7 @@ var appVersion = typeof(Program).Assembly
 // ---------------------------------------------------------------------------
 builder.Services.Configure<CodesysOptions>(builder.Configuration.GetSection(CodesysOptions.SectionName));
 builder.Services.AddSingleton<ProjectCatalog>();
+builder.Services.AddSingleton<ProjectPasswords>();
 builder.Services.AddSingleton<CodesysSessionPool>();
 builder.Services.AddSingleton<PythonRunner>();
 builder.Services.AddSingleton<CodesysOperations>();
@@ -119,6 +120,20 @@ async Task<IResult> RunAsync(Func<CancellationToken, Task<JsonElement>> operatio
     catch (CodesysValidationException ex)
     {
         return ValidationProblemResult(ex);
+    }
+    catch (ProjectPasswordException ex)
+    {
+        // 401: the project needs a password that only the user can provide, on the settings page.
+        return Results.Problem(
+            title: "Project password required",
+            detail: ex.Message,
+            statusCode: StatusCodes.Status401Unauthorized,
+            extensions: new Dictionary<string, object?>
+            {
+                ["code"] = ex.Code,
+                ["project"] = ex.Project.Name,
+                ["projectPath"] = ex.Project.Path,
+            });
     }
     catch (ScriptExecutionException ex)
     {
@@ -236,6 +251,22 @@ app.MapGet("/projects", () => Results.Json(ops.ListProjects()))
     .WithName("ListProjects")
     .WithTags("Projects")
     .WithSummary("Configured projects (default first) with the state of their CODESYS session.");
+
+app.MapPost("/projects/password", (ProjectPasswordRequest request) =>
+    {
+        try
+        {
+            var project = ops.SetProjectPassword(request.Project, request.Password);
+            return Results.Json(sessions.GetStatus(project));
+        }
+        catch (CodesysValidationException ex)
+        {
+            return ValidationProblemResult(ex);
+        }
+    })
+    .WithName("SetProjectPassword")
+    .WithTags("Projects")
+    .WithSummary("Enter (or, with an empty password, forget) the password of a password-protected project. Kept in memory only.");
 
 app.MapGet("/sessions", () => Results.Json(projects.List().Select(sessions.GetStatus)))
     .WithName("ListSessions")
@@ -399,6 +430,11 @@ app.Lifetime.ApplicationStarted.Register(() =>
                 log.LogInformation("Warming up the CODESYS session with {Project}", project.Path);
                 await ops.OpenProjectAsync(project.Path, app.Lifetime.ApplicationStopping);
                 log.LogInformation("CODESYS session for {Project} is warm", project.Name);
+            }
+            catch (ProjectPasswordException ex)
+            {
+                // Not a session failure: the settings page asks for the password.
+                log.LogWarning("Not warming up {Project}: {Message}", project.Name, ex.Message);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

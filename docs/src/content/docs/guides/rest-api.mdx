@@ -36,6 +36,7 @@ default project.
 | POST | `/compile`       | `{ clean?, saveAfterCompile? }` |
 | GET  | `/projects`      | – configured projects with their session state |
 | GET  | `/sessions`      | – session status of every configured project |
+| POST | `/projects/password` | `{ project?, password }` — password of a password-protected project, kept in memory only (empty forgets it) |
 | GET  | `/session`       | – persistent CODESYS status |
 | POST | `/session/start` | – start CODESYS and open the project |
 | POST | `/session/stop`  | – stop CODESYS, releasing the project file |
@@ -51,6 +52,7 @@ default project.
 | Code | Meaning |
 |---|---|
 | `200` | Success. |
+| `401` | The project is password protected and its password is missing (`code: password_required`) or wrong (`password_invalid`). Enter it on the settings page or via `POST /projects/password`. |
 | `400` | Invalid request, no project configured, `project` names no configured project, or the project file doesn't exist. |
 | `502` | The CODESYS script failed. The ProblemDetails body carries `script`, `exitCode`, `pythonTraceback` and `stderr`. |
 | `499` | The client disconnected while CODESYS was still working. |

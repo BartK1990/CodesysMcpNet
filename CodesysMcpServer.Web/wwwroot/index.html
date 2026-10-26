@@ -168,6 +168,20 @@
   .session-actions button { padding: 0.4rem 1rem; }
   .session-detail { margin-top: 0.3rem; }
   .session-error { margin-top: 0.3rem; font-size: 0.85rem; color: var(--err); white-space: pre-wrap; }
+  .session-password { margin-top: 0.5rem; }
+  .session-password[hidden] { display: none; }
+  .session-password .hint { margin: 0 0 0.35rem; color: var(--warn); font-weight: 600; }
+  .session-password .field-row button { padding: 0.45rem 1rem; }
+  input[type=password] {
+    flex: 1;
+    min-width: 0;
+    padding: 0.5rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+  }
   .session-error:empty { display: none; }
   #structure-project { width: auto; max-width: 14rem; margin-left: 0.6rem; padding: 0.5rem 0.6rem; }
   #structure-project[hidden] { display: none; }
@@ -808,9 +822,20 @@
     const detail = el('div', 'status session-detail', '\u00a0');
     const error = el('div', 'session-error');
 
+    // Shown when CODESYS could not open the project without (the right) password.
+    const passwordForm = Object.assign(el('form', 'session-password'), { hidden: true });
+    const passwordHint = el('div', 'hint');
+    const passwordLine = el('div', 'field-row');
+    const passwordInput = Object.assign(document.createElement('input'), {
+      type: 'password', placeholder: 'Project password', autocomplete: 'off',
+    });
+    const unlock = Object.assign(el('button', '', 'Unlock'), { type: 'submit' });
+    passwordLine.append(passwordInput, unlock);
+    passwordForm.append(passwordHint, passwordLine);
+
     actions.append(start, stop);
     head.append(dot, name, tag, state, actions);
-    row.append(head, detail, error);
+    row.append(head, detail, error, passwordForm);
 
     start.addEventListener('click', () => sessionAction(path, 'start'));
     stop.addEventListener('click', () => {
@@ -819,7 +844,37 @@
       if (confirm(msg)) sessionAction(path, 'stop');
     });
 
-    return { row, dot, name, tag, state, start, stop, detail, error };
+    const r = { row, dot, name, tag, state, start, stop, detail, error, passwordForm, passwordHint, passwordInput, unlock, enabled: false };
+
+    passwordForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const password = passwordInput.value;
+      if (!password) return;
+      unlock.disabled = true;
+      try {
+        const res = await fetch('/projects/password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project: path, password }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          actionErrors.set(path, data.detail || `Could not set the password (HTTP ${res.status}).`);
+          return;
+        }
+        passwordInput.value = '';
+        // With a persistent session, opening the project right away tells at once whether
+        // the password is right; otherwise it's used by the next call.
+        if (r.enabled) await sessionAction(path, 'start');
+      } catch {
+        actionErrors.set(path, 'Could not reach the server.');
+      } finally {
+        unlock.disabled = false;
+        refreshSessions();
+      }
+    });
+
+    return r;
   }
 
   function describe(s, state) {
@@ -851,17 +906,30 @@
     if (pending === 'start' && (state === 'stopped' || state === 'ready')) state = 'starting';
     if (pending === 'stop' && state !== 'stopped') state = 'stopping';
 
-    r.dot.className = 'session-dot ' + (s.lastError && state === 'stopped' ? 'error' : state);
+    // A failed open can leave CODESYS itself running (state "ready") without the project, so
+    // anything but a request in progress counts as locked.
+    const locked = !!s.passwordNeeded && !pending && !ACTIVE_STATES.has(state);
+
+    r.enabled = s.enabled;
+    r.dot.className = 'session-dot ' + (locked || (s.lastError && state === 'stopped') ? 'error' : state);
     r.name.textContent = s.project || 'Project';
     r.name.title = s.projectPath || '';
     r.tag.hidden = !(multi && isDefault);
-    r.state.textContent = STATE_LABELS[state] || state;
-    r.detail.textContent = describe(s, state);
-    r.error.textContent = actionErrors.get(s.projectPath) || s.lastError || '';
+    r.state.textContent = locked ? 'Password required' : (STATE_LABELS[state] || state);
+    r.detail.textContent = locked
+      ? 'CODESYS cannot open this project without its password.'
+      : describe(s, state);
+    // The password form explains a password failure; don't repeat it as an error.
+    r.error.textContent = locked ? '' : (actionErrors.get(s.projectPath) || s.lastError || '');
+
+    r.passwordForm.hidden = !locked;
+    r.passwordHint.textContent = s.passwordNeeded === 'password_invalid'
+      ? '🔒 The password was rejected. Enter the correct one.'
+      : '🔒 This project is password protected. Enter its password to open it.';
 
     r.start.hidden = !s.enabled;
     r.stop.hidden = !s.enabled;
-    r.start.disabled = pending !== undefined || state !== 'stopped';
+    r.start.disabled = pending !== undefined || (state !== 'stopped' && !locked);
     r.stop.disabled = pending !== undefined || state === 'stopped' || state === 'stopping';
     return state;
   }

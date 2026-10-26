@@ -72,10 +72,17 @@ public sealed class PythonRunner
     /// <summary>
     /// Runs a script with a strongly typed payload object (serialized to the request file).
     /// <paramref name="projectPath"/> picks the persistent session; the payload names the
-    /// project the script itself opens.
+    /// project the script itself opens. <paramref name="projectPassword"/>, when set, is handed
+    /// to the script in a separate file that is always deleted afterwards (even with
+    /// <see cref="CodesysOptions.KeepTempFiles"/>), so it never lingers on disk.
     /// </summary>
-    public Task<ScriptResult> ExecuteAsync(string scriptName, string projectPath, object payload, CancellationToken ct = default) =>
-        ExecuteCoreAsync(scriptName, projectPath, payload, extraArguments: null, ct);
+    public Task<ScriptResult> ExecuteAsync(
+        string scriptName,
+        string projectPath,
+        object payload,
+        string? projectPassword = null,
+        CancellationToken ct = default) =>
+        ExecuteCoreAsync(scriptName, projectPath, payload, extraArguments: null, projectPassword, ct);
 
     /// <summary>
     /// Runs a script with a plain argument list. The arguments are handed to the script as
@@ -86,13 +93,14 @@ public sealed class PythonRunner
         string projectPath,
         IReadOnlyList<string> args,
         CancellationToken ct = default) =>
-        ExecuteCoreAsync(scriptName, projectPath, new { args }, args, ct);
+        ExecuteCoreAsync(scriptName, projectPath, new { args }, args, projectPassword: null, ct);
 
     private async Task<ScriptResult> ExecuteCoreAsync(
         string scriptName,
         string projectPath,
         object payload,
         IReadOnlyList<string>? extraArguments,
+        string? projectPassword,
         CancellationToken ct)
     {
         var scriptPath = ResolveScript(scriptName);
@@ -101,11 +109,15 @@ public sealed class PythonRunner
         var correlation = Guid.NewGuid().ToString("N");
         var requestPath = Path.Combine(workDirectory, $"{correlation}.req.json");
         var resultPath = Path.Combine(workDirectory, $"{correlation}.res.json");
-
-        await WriteRequestFileAsync(requestPath, resultPath, Path.GetFileName(scriptPath), payload, ct);
+        var passwordPath = projectPassword is null ? null : Path.Combine(workDirectory, $"{correlation}.pw");
 
         try
         {
+            if (passwordPath is not null)
+                await File.WriteAllTextAsync(passwordPath, projectPassword, Utf8NoBom, ct);
+
+            await WriteRequestFileAsync(requestPath, resultPath, Path.GetFileName(scriptPath), payload, passwordPath, ct);
+
             using var scope = _logger.BeginScope($"script={scriptName} id={correlation[..8]}");
 
             if (!_sessions.Enabled)
@@ -132,6 +144,9 @@ public sealed class PythonRunner
         }
         finally
         {
+            if (passwordPath is not null)
+                TryDelete(passwordPath);
+
             if (!Options.KeepTempFiles)
             {
                 TryDelete(requestPath);
@@ -262,6 +277,7 @@ public sealed class PythonRunner
         {
             var message = $"Script '{scriptName}' reported a failure.";
             string? traceback = null;
+            string? code = null;
 
             if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object)
             {
@@ -270,6 +286,9 @@ public sealed class PythonRunner
 
                 if (error.TryGetProperty("traceback", out var t) && t.ValueKind == JsonValueKind.String)
                     traceback = t.GetString();
+
+                if (error.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.String)
+                    code = c.GetString();
             }
 
             throw new ScriptExecutionException(
@@ -277,7 +296,8 @@ public sealed class PythonRunner
                 message,
                 exitCode,
                 traceback,
-                Tail(stderr));
+                Tail(stderr),
+                errorCode: code);
         }
 
         var data = root.TryGetProperty("data", out var dataElement)
@@ -412,6 +432,7 @@ public sealed class PythonRunner
         string resultPath,
         string scriptFileName,
         object payload,
+        string? passwordPath,
         CancellationToken ct)
     {
         // Serialize the payload, then splice in the result path so scripts always know where to write.
@@ -420,6 +441,8 @@ public sealed class PythonRunner
 
         node["resultPath"] = resultPath;
         node["script"] = scriptFileName;   // lets the persistent session know what to run
+        if (passwordPath is not null)
+            node["projectPasswordFile"] = passwordPath;   // see mcp_io.request_password
 
         // UTF-8 without BOM: Python's json module rejects a leading BOM.
         await File.WriteAllTextAsync(requestPath, node.ToJsonString(PayloadJsonOptions), Utf8NoBom, ct);

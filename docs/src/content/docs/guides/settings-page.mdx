@@ -13,6 +13,7 @@ import stopped from '../../../assets/screenshots/session-stopped.png';
 import browser from '../../../assets/screenshots/file-browser.png';
 import structure from '../../../assets/screenshots/project-structure.png';
 import additional from '../../../assets/screenshots/additional-projects.png';
+import password from '../../../assets/screenshots/session-password.png';
 
 The server's web UI at [http://127.0.0.1:5088/](http://127.0.0.1:5088/) is where you choose
 **which CODESYS installation and which project** every MCP tool and REST endpoint acts on, and
@@ -59,6 +60,20 @@ each with its own state and **Start** / **Stop** buttons.
 
 **Stop** closes the project and ends CODESYS, which releases the `.project` file so you can open
 it in the CODESYS IDE. Changes that a failed request left unsaved are discarded.
+
+### Password-protected projects
+
+If CODESYS can't open a project without its password, the project's row says **Password
+required** and asks for it. Enter it and click **Unlock**: the server opens the project with it
+right away, and says so if the password was rejected.
+
+<Image src={password} alt="Session row asking for the project password" width="640" />
+
+The password is kept **in memory only**: it is never written to the settings files, never shown
+again, and never returned by the API, so after a server restart you enter it once more. Scripts
+receive it through a temporary file that is deleted as soon as the call finishes. MCP tools that
+hit a password-protected project return an error telling the assistant to have you enter the
+password here, so it never passes through the chat.
 
 ## CODESYS.exe path, project and profile
 

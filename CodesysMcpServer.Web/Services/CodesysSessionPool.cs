@@ -23,6 +23,7 @@ public sealed class CodesysSessionPool : IAsyncDisposable
     private const string SharedKey = "default";
 
     private readonly IOptionsMonitor<CodesysOptions> _options;
+    private readonly ProjectPasswords _passwords;
     private readonly ILogger _logger;
     private readonly ILogger _sessionLogger;
     private readonly IDisposable? _changeSubscription;
@@ -31,9 +32,11 @@ public sealed class CodesysSessionPool : IAsyncDisposable
 
     public CodesysSessionPool(
         IOptionsMonitor<CodesysOptions> options,
+        ProjectPasswords passwords,
         ILoggerFactory loggerFactory)
     {
         _options = options;
+        _passwords = passwords;
         _logger = loggerFactory.CreateLogger<CodesysSessionPool>();
         _sessionLogger = loggerFactory.CreateLogger<CodesysSession>();
         _changeSubscription = options.OnChange(_ => PruneInBackground());
@@ -65,7 +68,13 @@ public sealed class CodesysSessionPool : IAsyncDisposable
     }
 
     public CodesysSessionStatus GetStatus(CodesysProject project) =>
-        GetEntry(project.Path).Session.GetStatus() with { Project = project.Name, ProjectPath = project.Path };
+        GetEntry(project.Path).Session.GetStatus() with
+        {
+            Project = project.Name,
+            ProjectPath = project.Path,
+            PasswordNeeded = _passwords.Needed(project.Path),
+            HasPassword = _passwords.Has(project.Path),
+        };
 
     /// <summary>Records a session-level failure (e.g. a failed warm-up) for the status display.</summary>
     public void ReportFailure(string projectPath, string message) =>

@@ -5,7 +5,13 @@ namespace CodesysMcpServer.Web.Services;
 
 /// <summary>A configured project plus the state of its CODESYS session (<c>GET /projects</c>, <c>projects</c> tool).</summary>
 /// <param name="Session">Session state, as in <see cref="CodesysSessionStatus.State"/>.</param>
-public sealed record ProjectSummary(string Name, string Path, bool IsDefault, bool Exists, string Session);
+/// <param name="PasswordNeeded">
+/// <c>password_required</c> / <c>password_invalid</c> when the project could not be opened for
+/// its password — the user has to enter it on the settings page; null otherwise.
+/// </param>
+/// <param name="HasPassword">Whether a password was entered for this project (it is never returned).</param>
+public sealed record ProjectSummary(
+    string Name, string Path, bool IsDefault, bool Exists, string Session, string? PasswordNeeded, bool HasPassword);
 
 /// <summary>
 /// The one place that knows how to turn a request into a CODESYS script run. Both the REST
@@ -24,18 +30,31 @@ public sealed class CodesysOperations
     private readonly PythonRunner _runner;
     private readonly ProjectCatalog _projects;
     private readonly CodesysSessionPool _sessions;
+    private readonly ProjectPasswords _passwords;
 
-    public CodesysOperations(PythonRunner runner, ProjectCatalog projects, CodesysSessionPool sessions)
+    public CodesysOperations(
+        PythonRunner runner, ProjectCatalog projects, CodesysSessionPool sessions, ProjectPasswords passwords)
     {
         _runner = runner;
         _projects = projects;
         _sessions = sessions;
+        _passwords = passwords;
     }
 
     public IReadOnlyList<ProjectSummary> ListProjects() =>
         _projects.List()
-            .Select(p => new ProjectSummary(p.Name, p.Path, p.IsDefault, p.Exists, _sessions.GetStatus(p).State))
+            .Select(p => new ProjectSummary(
+                p.Name, p.Path, p.IsDefault, p.Exists, _sessions.GetStatus(p).State,
+                _passwords.Needed(p.Path), _passwords.Has(p.Path)))
             .ToList();
+
+    /// <summary>Stores (or, when empty, forgets) the password of a configured project.</summary>
+    public CodesysProject SetProjectPassword(string? project, string? password)
+    {
+        var resolved = _projects.Resolve(project);
+        _passwords.Set(resolved.Path, password);
+        return resolved;
+    }
 
     /// <summary>Opens the project and nothing else — warms up the persistent CODESYS session.</summary>
     public Task<JsonElement> OpenProjectAsync(string? project, CancellationToken ct) =>
@@ -211,12 +230,23 @@ public sealed class CodesysOperations
     private async Task<JsonElement> RunAsync(
         string script, string? project, Func<string, object> payload, CancellationToken ct)
     {
-        var projectPath = _projects.Resolve(project).Path;
+        var resolved = _projects.Resolve(project);
+        var projectPath = resolved.Path;
 
         if (!File.Exists(projectPath))
             throw new CodesysValidationException($"Project file not found: {projectPath}");
 
-        var result = await _runner.ExecuteAsync(script, projectPath, payload(projectPath), ct);
-        return result.Data;
+        try
+        {
+            var result = await _runner.ExecuteAsync(
+                script, projectPath, payload(projectPath), _passwords.Get(projectPath), ct);
+            _passwords.MarkOpened(projectPath);
+            return result.Data;
+        }
+        catch (ScriptExecutionException ex) when (ProjectPasswords.IsPasswordCode(ex.ErrorCode))
+        {
+            _passwords.MarkNeeded(projectPath, ex.ErrorCode!);
+            throw new ProjectPasswordException(resolved, ex.ErrorCode!, ex);
+        }
     }
 }

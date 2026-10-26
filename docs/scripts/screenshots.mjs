@@ -71,6 +71,12 @@ const sessionStates = {
     enabled: true, state: 'stopped', processId: null, startedAt: null,
     busySince: null, currentScript: null, requestsServed: 0, lastError: null,
   },
+  // Password-protected project that CODESYS could not open yet: the row asks for the password.
+  locked: {
+    enabled: true, state: 'stopped', processId: null, startedAt: null,
+    busySince: null, currentScript: null, requestsServed: 0, lastError: null,
+    passwordNeeded: 'password_required', hasPassword: false,
+  },
 };
 
 // GET /sessions: one status per configured project, default first. With several projects
@@ -136,7 +142,8 @@ async function newPage(browser, sessionState = 'ready', colorScheme = 'light', c
   await page.goto(BASE_URL + '/');
   await page.waitForSelector('#app-version:not(:empty)');
   await page.waitForSelector('#profile-status.ok');
-  await page.waitForSelector('.session-row .session-dot.' + sessionState);
+  const dot = sessionStates[sessionState].passwordNeeded ? 'error' : sessionState;
+  await page.waitForSelector('.session-row .session-dot.' + dot);
   return page;
 }
 
@@ -173,6 +180,11 @@ try {
   }
   page = await newPage(browser, 'ready');
   await shot(page.locator('#session-card'), 'session-ready.png');
+  await page.close();
+
+  page = await newPage(browser, 'locked');
+  await page.waitForSelector('.session-password:not([hidden])');
+  await shot(page.locator('#session-card'), 'session-password.png');
   await page.close();
 
   // Multiple projects: Max projects > 1, additional project rows, session project selector.

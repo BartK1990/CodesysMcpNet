@@ -122,6 +122,7 @@ def _serve(session, path):
 
         handler = _load_handler(script)
         session.prepare(request.get("projectPath"))
+        mcp_io.CURRENT_REQUEST = request
         data = handler(request)
 
         mcp_io.emit(request, data, True, None, echo=False)
@@ -129,11 +130,10 @@ def _serve(session, path):
     except Exception as ex:
         message = mcp_io._describe(ex)
         log("FAILED: " + message)
-        mcp_io.emit(request, None, False,
-                    {"message": message, "traceback": traceback.format_exc()},
-                    echo=False)
+        mcp_io.emit(request, None, False, mcp_io.error_payload(ex), echo=False)
         session.discard_unsaved_changes()
     finally:
+        mcp_io.CURRENT_REQUEST = None
         session.remember_disk_state()
 
     return False

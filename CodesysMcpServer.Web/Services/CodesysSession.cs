@@ -16,6 +16,8 @@ namespace CodesysMcpServer.Web.Services;
 /// <param name="LastError">Last session-level failure (crash, timeout, failed start), cleared by the next success.</param>
 /// <param name="Project">Name of the project this session serves (filled in by <see cref="CodesysSessionPool"/>).</param>
 /// <param name="ProjectPath">Full path of that project.</param>
+/// <param name="PasswordNeeded"><c>password_required</c> / <c>password_invalid</c> when the project could not be opened for its password.</param>
+/// <param name="HasPassword">Whether a password was entered for the project (it is never returned).</param>
 public sealed record CodesysSessionStatus(
     string State,
     bool Enabled,
@@ -28,7 +30,9 @@ public sealed record CodesysSessionStatus(
     string? LastError,
     DateTimeOffset? LastErrorAt,
     string? Project = null,
-    string? ProjectPath = null);
+    string? ProjectPath = null,
+    string? PasswordNeeded = null,
+    bool HasPassword = false);
 
 /// <summary>
 /// Keeps one CODESYS instance alive running <c>Scripts/session_host.py</c>, which holds the

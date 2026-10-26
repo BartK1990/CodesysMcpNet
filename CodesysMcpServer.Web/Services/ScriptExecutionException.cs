@@ -12,13 +12,15 @@ public sealed class ScriptExecutionException : Exception
         int? exitCode = null,
         string? pythonTraceback = null,
         string? stderr = null,
-        Exception? inner = null)
+        Exception? inner = null,
+        string? errorCode = null)
         : base(message, inner)
     {
         ScriptName = scriptName;
         ExitCode = exitCode;
         PythonTraceback = pythonTraceback;
         StandardError = stderr;
+        ErrorCode = errorCode;
     }
 
     public string ScriptName { get; }
@@ -28,4 +30,7 @@ public sealed class ScriptExecutionException : Exception
     public string? PythonTraceback { get; }
 
     public string? StandardError { get; }
+
+    /// <summary>The envelope's <c>error.code</c>, for failures the server handles specifically (e.g. a missing project password).</summary>
+    public string? ErrorCode { get; }
 }

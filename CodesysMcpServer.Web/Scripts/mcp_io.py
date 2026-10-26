@@ -10,7 +10,11 @@ argv[1] is the path to a UTF-8 JSON request file. The file always carries a
 The script answers with an envelope:
 
     { "ok": true,  "data": <payload>, "error": null }
-    { "ok": false, "data": null,      "error": { "message": "...", "traceback": "..." } }
+    { "ok": false, "data": null,      "error": { "message": "...", "traceback": "...", "code": "..." } }
+
+"code" is only present for failures the server reacts to specifically, e.g.
+"password_required" / "password_invalid" when the project could not be opened
+without (the right) password.
 
 The envelope is written to the result file *and* printed to stdout between
 sentinel markers, because CODESYS floods stdout with unrelated start-up text.
@@ -32,6 +36,11 @@ RESULT_END = "<<<MCP_RESULT_END>>>"
 # Set by session_host.py while it loads a script: run() then hands the handler over
 # instead of executing it and closing CODESYS. None means "one-shot" mode.
 HOSTED_HANDLERS = None
+
+# The request being served right now (one-shot or hosted), so shared helpers such as
+# codesys_api.Application.OpenProject can read request-wide options like the project
+# password without every script passing them through.
+CURRENT_REQUEST = None
 
 
 def log(message):
@@ -135,15 +144,42 @@ def run(handler):
         _exit(2)
         return
 
+    global CURRENT_REQUEST
+    CURRENT_REQUEST = request
     try:
         data = handler(request)
         emit(request, data, True, None)
         _exit(0)
     except Exception as ex:
-        message = _describe(ex)
-        log("FAILED: " + message)
-        emit(request, None, False, {"message": message, "traceback": traceback.format_exc()})
+        log("FAILED: " + _describe(ex))
+        emit(request, None, False, error_payload(ex))
         _exit(1)
+
+
+def error_payload(ex):
+    """The envelope's "error" member for an exception raised by a handler."""
+    error = {"message": _describe(ex), "traceback": traceback.format_exc()}
+    code = getattr(ex, "code", None)
+    if code:
+        error["code"] = code
+    return error
+
+
+def request_password():
+    """
+    Password of the project the current request opens, or None. The server writes it to
+    a separate file (deleted right after the request) rather than into the request itself,
+    so it never lingers in kept request files.
+    """
+    request = CURRENT_REQUEST
+    path = request.get("projectPasswordFile") if isinstance(request, dict) else None
+    if not path or not os.path.isfile(path):
+        return None
+    handle = codecs.open(path, "r", "utf-8-sig")
+    try:
+        return handle.read() or None
+    finally:
+        handle.close()
 
 
 def _describe(ex):

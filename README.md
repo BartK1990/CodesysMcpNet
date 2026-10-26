@@ -126,14 +126,17 @@ Every operation below acts on the default project configured on the
 | GET  | `/version`       | – (`{ "version": "1.0.0" }`) |
 | GET  | `/projects`      | – (configured projects, default first, with their session state) |
 | GET  | `/sessions`      | – (session status of every configured project) |
+| POST | `/projects/password` | `{ project?, password }` (password of a password-protected project; memory only, empty forgets it) |
 | GET  | `/session`       | – (persistent CODESYS status) |
 | POST | `/session/start` | – (start CODESYS and open the project) |
 | POST | `/session/stop`  | – (stop CODESYS, releasing the project file) |
 
 Status codes: `200` success, `400` invalid request, no project configured, `project` names
-no configured project, or the project file doesn't exist, `502` the script failed (the ProblemDetails body
-carries `script`, `exitCode`, `pythonTraceback` and `stderr`), `499` client disconnected
-mid-run.
+no configured project, or the project file doesn't exist, `401` the project is password
+protected and its password is missing (`code: password_required`) or wrong
+(`password_invalid`) — enter it on the settings page, `502` the script failed (the
+ProblemDetails body carries `script`, `exitCode`, `pythonTraceback` and `stderr`), `499`
+client disconnected mid-run.
 
 `type` accepts `PRG` / `FB` / `FUN`; `language` accepts `ST`, `IL`, `LD`, `FBD`, `SFC`, `CFC`.
 

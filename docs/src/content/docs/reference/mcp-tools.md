@@ -15,7 +15,7 @@ Python traceback).
 
 | Tool | Inputs | Returns |
 |---|---|---|
-| `projects` | – | Configured projects: `name`, `path`, `isDefault`, `exists` and the state of its CODESYS `session`. |
+| `projects` | – | Configured projects: `name`, `path`, `isDefault`, `exists`, the state of its CODESYS `session`, and `passwordNeeded` when the project's password has to be entered on the settings page. |
 
 ## Read
 

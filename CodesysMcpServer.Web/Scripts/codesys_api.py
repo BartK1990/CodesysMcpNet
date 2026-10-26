@@ -30,6 +30,7 @@ import fnmatch
 import re
 import time
 
+import mcp_io
 from mcp_io import log
 
 # Subtrees of the project tree slower than this are logged while scanning.
@@ -1739,13 +1740,21 @@ class Application(object):
         self.projects = resolve("projects")
 
     def OpenProject(self, path, password=None, update=False):
-        """Open a project, reusing the primary project when it is already the requested one."""
+        """
+        Open a project, reusing the primary project when it is already the requested one.
+        Without an explicit password, the one the server supplied for this request (if any)
+        is used. A failure that is about the password raises ProjectPasswordError, so the
+        server can ask the user for it instead of just reporting a failed open.
+        """
         primary = self._primary()
         if primary is not None and _same_path(_project_path(primary), path):
             log("Reusing already-open project: " + str(path))
             return Project(primary, path)
 
-        log("Opening project: " + str(path))
+        if not password:
+            password = mcp_io.request_password()
+
+        log("Opening project: " + str(path) + (" (with password)" if password else ""))
         kwargs = {}
         if password:
             kwargs["password"] = password
@@ -1753,9 +1762,14 @@ class Application(object):
             kwargs["update_project"] = True
 
         try:
-            script_project = self.projects.open(path, **kwargs) if kwargs else self.projects.open(path)
-        except TypeError:
-            script_project = self.projects.open(path)
+            try:
+                script_project = self.projects.open(path, **kwargs) if kwargs else self.projects.open(path)
+            except TypeError:
+                script_project = self.projects.open(path)
+        except Exception as ex:
+            if _is_password_error(ex):
+                raise ProjectPasswordError(path, bool(password), ex)
+            raise
 
         return Project(script_project, path)
 
@@ -1770,6 +1784,28 @@ class Application(object):
             return self.projects.primary
         except Exception:
             return None
+
+
+class ProjectPasswordError(Exception):
+    """CODESYS refused to open a project because its password is missing or wrong."""
+
+    def __init__(self, path, password_given, cause):
+        self.code = "password_invalid" if password_given else "password_required"
+        if password_given:
+            text = "The password for project '%s' was rejected." % path
+        else:
+            text = "Project '%s' is password protected; a password is required to open it." % path
+        Exception.__init__(self, text + " (CODESYS: " + mcp_io._describe(cause) + ")")
+
+
+# Words CODESYS uses (English / German UI languages) when opening fails for lack of the
+# right password: encrypted projects, password-protected projects.
+_PASSWORD_HINTS = (u"password", u"passwort", u"kennwort", u"encrypt", u"decrypt", u"verschl")
+
+
+def _is_password_error(ex):
+    text = mcp_io._to_text(ex).lower()
+    return any(hint in text for hint in _PASSWORD_HINTS)
 
 
 def _project_path(script_project):
