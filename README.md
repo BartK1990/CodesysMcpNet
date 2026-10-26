@@ -184,7 +184,7 @@ REST-specific; on the MCP side the message text carries the traceback instead).
   "PythonExecutablePath": "python",       // only used when UseCodesys is false
   "ScriptsDirectory": "Scripts",
   "WorkDirectory": "C:\\ProgramData\\CodesysMcpNet\\work",
-  "TimeoutSeconds": 600,
+  "TimeoutSeconds": 1200,
   "KeepTempFiles": false,
   "KeepSessionAlive": true,               // one long-lived CODESYS instead of one per call
   "StartSessionOnStartup": true,          // open the project as soon as the server starts
