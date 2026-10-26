@@ -14,6 +14,8 @@ namespace CodesysMcpServer.Web.Services;
 /// <param name="CurrentScript">Script being run right now, if any.</param>
 /// <param name="BusySince">When the current script was submitted.</param>
 /// <param name="LastError">Last session-level failure (crash, timeout, failed start), cleared by the next success.</param>
+/// <param name="Project">Name of the project this session serves (filled in by <see cref="CodesysSessionPool"/>).</param>
+/// <param name="ProjectPath">Full path of that project.</param>
 public sealed record CodesysSessionStatus(
     string State,
     bool Enabled,
@@ -24,7 +26,9 @@ public sealed record CodesysSessionStatus(
     string? CurrentScript,
     DateTimeOffset? BusySince,
     string? LastError,
-    DateTimeOffset? LastErrorAt);
+    DateTimeOffset? LastErrorAt,
+    string? Project = null,
+    string? ProjectPath = null);
 
 /// <summary>
 /// Keeps one CODESYS instance alive running <c>Scripts/session_host.py</c>, which holds the
@@ -46,8 +50,11 @@ public sealed record CodesysSessionStatus(
 /// The host also exits by itself when this server process disappears, so it never lingers
 /// holding the project locked.
 ///
-/// Not thread-safe on purpose: every call arrives under <see cref="PythonRunner"/>'s gate,
-/// except <see cref="DisposeAsync"/> at shutdown.
+/// One instance per project when <see cref="CodesysOptions.MaxProjects"/> is above 1, each with
+/// its own queue directory (see <see cref="CodesysSessionPool"/>); a single shared one otherwise.
+///
+/// Not thread-safe on purpose: every call arrives under its <see cref="CodesysSessionPool"/>
+/// gate, except <see cref="DisposeAsync"/> at shutdown.
 /// </summary>
 public sealed class CodesysSession : IAsyncDisposable
 {
@@ -60,7 +67,8 @@ public sealed class CodesysSession : IAsyncDisposable
     private static readonly TimeSpan ShutdownGracePeriod = TimeSpan.FromSeconds(20);
 
     private readonly IOptionsMonitor<CodesysOptions> _optionsMonitor;
-    private readonly ILogger<CodesysSession> _logger;
+    private readonly ILogger _logger;
+    private readonly string _key;
     private readonly Queue<string> _outputTail = new();
 
     private Process? _process;
@@ -76,10 +84,12 @@ public sealed class CodesysSession : IAsyncDisposable
     private string? _lastError;
     private DateTimeOffset? _lastErrorAt;
 
-    public CodesysSession(IOptionsMonitor<CodesysOptions> options, ILogger<CodesysSession> logger)
+    /// <param name="key">Names this session's queue directory and config file under the work directory.</param>
+    public CodesysSession(IOptionsMonitor<CodesysOptions> options, ILogger logger, string key)
     {
         _optionsMonitor = options;
         _logger = logger;
+        _key = key;
     }
 
     private CodesysOptions Options => _optionsMonitor.CurrentValue;
@@ -240,7 +250,7 @@ public sealed class CodesysSession : IAsyncDisposable
             return;
         }
 
-        _logger.LogInformation("Stopping CODESYS session (pid {Pid})", process!.Id);
+        _logger.LogInformation("Stopping CODESYS session {Key} (pid {Pid})", _key, process!.Id);
 
         try
         {
@@ -290,10 +300,11 @@ public sealed class CodesysSession : IAsyncDisposable
             _process = null;
         }
 
-        _queueDirectory = Path.Combine(workDirectory, "session");
+        var sessionsDirectory = Path.Combine(workDirectory, "sessions");
+        _queueDirectory = Path.Combine(sessionsDirectory, _key);
         ResetQueueDirectory(_queueDirectory);
 
-        var configPath = Path.Combine(workDirectory, "session.json");
+        var configPath = Path.Combine(sessionsDirectory, _key + ".json");
         var config = new
         {
             queueDirectory = _queueDirectory,
@@ -317,12 +328,12 @@ public sealed class CodesysSession : IAsyncDisposable
             WorkingDirectory = scriptsDirectory,
         };
 
-        _logger.LogInformation("Starting CODESYS session: {File} {Arguments}", startInfo.FileName, startInfo.Arguments);
+        _logger.LogInformation("Starting CODESYS session {Key}: {File} {Arguments}", _key, startInfo.FileName, startInfo.Arguments);
 
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         process.OutputDataReceived += (_, e) => OnOutput(e.Data, isError: false);
         process.ErrorDataReceived += (_, e) => OnOutput(e.Data, isError: true);
-        process.Exited += (_, _) => _logger.LogInformation("CODESYS session process exited");
+        process.Exited += (_, _) => _logger.LogInformation("CODESYS session {Key} process exited", _key);
 
         lock (_outputTail)
             _outputTail.Clear();
@@ -373,9 +384,9 @@ public sealed class CodesysSession : IAsyncDisposable
             return;
 
         if (isError)
-            _logger.LogWarning("[session:stderr] {Line}", line);
+            _logger.LogWarning("[session {Key}:stderr] {Line}", _key, line);
         else
-            _logger.LogInformation("[session] {Line}", line);
+            _logger.LogInformation("[session {Key}] {Line}", _key, line);
     }
 
     private string OutputTail()

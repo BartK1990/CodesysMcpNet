@@ -4,9 +4,18 @@ description: The tools the server exposes to MCP clients.
 ---
 
 All tools act on the project configured on the
-[settings page](/CodesysMcpNet/guides/settings-page/). A failed validation or script run is
+[settings page](/CodesysMcpNet/guides/settings-page/). Every tool except `projects` also takes
+an optional `project` argument (a configured project's name or full path) to pick one of
+several projects — see [Multiple projects](/CodesysMcpNet/guides/multiple-projects/); omit it
+for the default project. A failed validation or script run is
 returned to the client as a tool error whose message carries the details (including the
 Python traceback).
+
+## Projects
+
+| Tool | Inputs | Returns |
+|---|---|---|
+| `projects` | – | Configured projects: `name`, `path`, `isDefault`, `exists` and the state of its CODESYS `session`. |
 
 ## Read
 

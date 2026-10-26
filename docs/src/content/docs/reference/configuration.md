@@ -14,7 +14,9 @@ change settings through the [settings page](/CodesysMcpNet/guides/settings-page/
 "Codesys": {
   "UseCodesys": true,                     // false -> run scripts under a plain Python interpreter (testing)
   "ExecutablePath": "C:\\Program Files\\CODESYS 3.5.20.0\\CODESYS\\Common\\CODESYS.exe",
-  "ProjectPath": null,                    // the .project every endpoint/tool acts on
+  "ProjectPath": null,                    // the default .project every endpoint/tool acts on
+  "MaxProjects": 1,                       // >1 allows AdditionalProjectPaths (one CODESYS each)
+  "AdditionalProjectPaths": [],           // further projects, selected per call via "project"
   "Profile": "CODESYS V3.5 SP20 Patch 0", // must match an installed profile
   "NoUserInterface": true,                // start CODESYS with --noUI
   "AdditionalArguments": [],              // extra CODESYS.exe arguments
@@ -29,8 +31,9 @@ change settings through the [settings page](/CodesysMcpNet/guides/settings-page/
 }
 ```
 
-`ExecutablePath`, `ProjectPath` and `Profile` are what the settings page edits; it writes them
-to `appsettings.production.json`.
+`ExecutablePath`, `ProjectPath`, `Profile`, `MaxProjects` and `AdditionalProjectPaths` are what
+the settings page edits; it writes them to `appsettings.production.json`. See
+[Multiple projects](/CodesysMcpNet/guides/multiple-projects/) for the last two.
 
 :::caution
 `WorkDirectory` must not contain spaces: CODESYS splits its `--scriptargs` value on

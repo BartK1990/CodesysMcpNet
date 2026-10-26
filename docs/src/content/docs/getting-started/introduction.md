@@ -34,7 +34,9 @@ CODESYS IDE would do.
 
 Every operation acts on **one CODESYS installation and one project**, chosen on the
 [settings page](/CodesysMcpNet/guides/settings-page/). No tool or endpoint takes a project path
-as input — so an assistant can only ever touch the project you selected.
+as input — so an assistant can only ever touch the project you selected. If you need more,
+[Max projects](/CodesysMcpNet/guides/multiple-projects/) lets you configure several, and
+callers pick one of those by name.
 
 ## Requirements
 
