@@ -1770,7 +1770,11 @@ class Application(object):
             if _is_password_error(ex):
                 raise ProjectPasswordError(path, bool(password), ex)
             if _is_cancelled_prompt(ex):
-                raise ProjectOpenCancelledError(path, ex)
+                # A password-protected project opened without (the right) password shows a
+                # password dialog, which --noUI cancels like any other question. Report it as
+                # a password problem so the settings page asks for one; the message still
+                # lists the other dialogs that end the same way.
+                raise ProjectPasswordError(path, bool(password), ex, prompted=True)
             raise
 
         return Project(script_project, path)
@@ -1791,12 +1795,19 @@ class Application(object):
 class ProjectPasswordError(Exception):
     """CODESYS refused to open a project because its password is missing or wrong."""
 
-    def __init__(self, path, password_given, cause):
+    def __init__(self, path, password_given, cause, prompted=False):
         self.code = "password_invalid" if password_given else "password_required"
         if password_given:
             text = "The password for project '%s' was rejected." % path
         else:
             text = "Project '%s' is password protected; a password is required to open it." % path
+        if prompted:
+            # Only a cancelled dialog to go by: most likely the password prompt, not certainly.
+            text = ("CODESYS cancelled opening project '%s' because it asked a question that "
+                    "cannot be shown without a UI, most likely for the project password%s. "
+                    "If the project has no password, the dialog was something else: %s"
+                    % (path, " (the given one was not accepted)" if password_given else "",
+                       _OTHER_DIALOG_CAUSES))
         Exception.__init__(self, text + " (CODESYS: " + mcp_io._describe(cause) + ")")
 
 
@@ -1810,19 +1821,12 @@ def _is_password_error(ex):
     return any(hint in text for hint in _PASSWORD_HINTS)
 
 
-class ProjectOpenCancelledError(Exception):
-    """CODESYS needed an answer to a dialog while opening, which --noUI answers with Cancel."""
-
-    def __init__(self, path, cause):
-        self.code = "open_cancelled"
-        Exception.__init__(self, (
-            "CODESYS cancelled opening project '%s' because it wanted to ask a question that "
-            "cannot be shown without a UI. Usual causes: the project is open in another CODESYS "
-            "instance (lock file next to the .project), it was saved with a different CODESYS "
-            "version or profile and asks to update/convert, or devices/libraries it references "
-            "are not installed. Open it once in the CODESYS GUI with the same profile, answer "
-            "the dialog, save and close it, then retry. (CODESYS: %s)")
-            % (path, mcp_io._describe(cause)))
+# Dialogs besides the password prompt that --noUI cancels while opening a project.
+_OTHER_DIALOG_CAUSES = (
+    "Usual causes: the project is open in another CODESYS instance (lock file next to the "
+    ".project), it was saved with a different CODESYS version or profile and asks to "
+    "update/convert, or devices/libraries it references are not installed. Open it once in "
+    "the CODESYS GUI with the same profile, answer the dialog, save and close it, then retry.")
 
 
 # CODESYS answers every prompt with Cancel under --noUI and then aborts the open with this.

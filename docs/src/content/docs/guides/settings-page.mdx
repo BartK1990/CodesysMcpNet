@@ -67,6 +67,13 @@ If CODESYS can't open a project without its password, the project's row says **P
 required** and asks for it. Enter it and click **Unlock**: the server opens the project with it
 right away, and says so if the password was rejected.
 
+Without a UI, CODESYS doesn't always report a password prompt as such: it cancels the dialog and
+aborts the open with "Operation cancelled by user". The server treats that as a password prompt
+too. If the project has no password, a different dialog was cancelled: the project is open in
+another CODESYS instance (lock file next to the `.project`), it asks to be updated to this
+CODESYS version or profile, or devices/libraries it references are missing. Open it once in the
+CODESYS GUI with the same profile, answer the dialog, save and close it, then retry.
+
 <Image src={password} alt="Session row asking for the project password" width="640" />
 
 The password is kept **in memory only**: it is never written to the settings files, never shown
