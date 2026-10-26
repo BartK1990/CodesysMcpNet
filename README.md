@@ -245,8 +245,9 @@ page), and:
   `MaxProjects`) stops its session and releases the file.
 
 The [settings page](#settings-page) shows the session state (Stopped / Starting / Ready /
-Busy / Stopping, with the running script, uptime and last error) and has **Start** / **Stop**
-buttons; it polls `GET /session`.
+Busy / Stopping, with the running script, uptime and last error) with **Start** / **Stop**
+buttons — one row per configured project, each started and stopped independently; it polls
+`GET /sessions`.
 
 Set `KeepSessionAlive` to `false` to go back to one CODESYS process per call.
 

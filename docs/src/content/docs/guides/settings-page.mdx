@@ -21,7 +21,7 @@ where you can see and control the CODESYS session.
 <Image src={settings} alt="The settings page" width="640" />
 
 Set **Max projects** above 1 to configure further projects next to the default one: an
-**Additional projects** list appears, and the session card gets a project selector. See
+**Additional projects** list appears, and the session card shows one row per project. See
 [Multiple projects](/CodesysMcpNet/guides/multiple-projects/).
 
 <Image src={additional} alt="Additional projects list" width="640" />
@@ -41,6 +41,8 @@ The badge next to the title shows the version of the running server. It is the s
 
 The card at the top shows the state of the persistent CODESYS instance (see
 [Persistent session](/CodesysMcpNet/guides/persistent-session/)). It refreshes on its own.
+With [several projects](/CodesysMcpNet/guides/multiple-projects/) it has one row per project,
+each with its own state and **Start** / **Stop** buttons.
 
 | State | Meaning |
 |---|---|
@@ -82,7 +84,8 @@ switches to the new project on the next call.
 ## View project structure
 
 Shows the project tree as the server sees it: applications and folders, POUs with their type
-and language, GVLs with their variable count, DUTs and ENUMs.
+and language, GVLs with their variable count, DUTs and ENUMs. With several projects, pick
+the project in the list next to the button.
 
 <Image src={structure} alt="Project structure tree" width="640" />
 
