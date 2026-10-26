@@ -18,6 +18,7 @@ export default defineConfig({
         baseUrl: 'https://github.com/BartK1990/CodesysMcpNet/edit/master/docs/',
       },
       sidebar: [
+        { label: 'Home', link: '/' },
         {
           label: 'Getting started',
           items: [
