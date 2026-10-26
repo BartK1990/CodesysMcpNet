@@ -29,7 +29,7 @@ public sealed class CodesysTools
     }
 
     [McpServerTool(Name = "projects")]
-    [Description("Projects this server is configured for: name, path, whether it is the default one (used when a tool's project argument is omitted), whether the file exists, and the state of its CODESYS session. Pass a name from this list as the project argument of the other tools.")]
+    [Description("Projects this server is configured for: name, path, whether it is the default one (used when a tool's project argument is omitted), whether the file exists, the state of its CODESYS session, and passwordNeeded when the project is password protected and its password has to be entered on the settings page. Pass a name from this list as the project argument of the other tools.")]
     public IReadOnlyList<ProjectSummary> Projects() => _ops.ListProjects();
 
     [McpServerTool(Name = "structure")]
@@ -153,6 +153,11 @@ public sealed class CodesysTools
         catch (CodesysValidationException ex)
         {
             throw new McpException(ex.Message);
+        }
+        catch (ProjectPasswordException ex)
+        {
+            // Only the user can supply it: point them (via the model) at the settings page.
+            throw new McpException(ex.Message + " Ask the user to enter it there; do not ask them for the password in chat.");
         }
         catch (ScriptExecutionException ex)
         {

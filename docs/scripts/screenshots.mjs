@@ -71,6 +71,24 @@ const sessionStates = {
     enabled: true, state: 'stopped', processId: null, startedAt: null,
     busySince: null, currentScript: null, requestsServed: 0, lastError: null,
   },
+  // Password-protected project that CODESYS could not open yet: the row asks for the password.
+  locked: {
+    enabled: true, state: 'stopped', processId: null, startedAt: null,
+    busySince: null, currentScript: null, requestsServed: 0, lastError: null,
+    passwordNeeded: 'password_required', hasPassword: false,
+  },
+};
+
+// GET /sessions: one status per configured project, default first. With several projects
+// they show different states, so the screenshot shows each project's session separately.
+const sessionList = (s, state) => {
+  const named = (status, p, i) => ({
+    ...status, project: p.name, projectPath: p.path,
+    processId: status.processId && status.processId + i * 1316,
+  });
+  const projects = projectList(s);
+  const others = [sessionStates.busy, sessionStates.stopped];
+  return projects.map((p, i) => named(i === 0 ? sessionStates[state] : others[(i - 1) % others.length], p, i));
 };
 
 const pou = (path, type, language) => ({ name: path.split('/').pop(), path, type, language });
@@ -118,13 +136,14 @@ async function newPage(browser, sessionState = 'ready', colorScheme = 'light', c
   await page.route('**/settings', (r) => json(r, current));
   await page.route('**/profiles?*', (r) => json(r, profiles));
   await page.route('**/projects', (r) => json(r, projectList(current)));
-  await page.route(/\/session(\?.*)?$/, (r) => json(r, sessionStates[sessionState]));
+  await page.route('**/sessions', (r) => json(r, sessionList(current, sessionState)));
   await page.route(/\/structure(\?.*)?$/, (r) => json(r, structure));
   await page.route('**/files?*', (r) => json(r, listing));
   await page.goto(BASE_URL + '/');
   await page.waitForSelector('#app-version:not(:empty)');
   await page.waitForSelector('#profile-status.ok');
-  await page.waitForSelector('#session-dot.' + sessionState);
+  const dot = sessionStates[sessionState].passwordNeeded ? 'error' : sessionState;
+  await page.waitForSelector('.session-row .session-dot.' + dot);
   return page;
 }
 
@@ -163,13 +182,16 @@ try {
   await shot(page.locator('#session-card'), 'session-ready.png');
   await page.close();
 
+  page = await newPage(browser, 'locked');
+  await page.waitForSelector('.session-password:not([hidden])');
+  await shot(page.locator('#session-card'), 'session-password.png');
+  await page.close();
+
   // Multiple projects: Max projects > 1, additional project rows, session project selector.
   page = await newPage(browser, 'ready', 'light', multiSettings);
-  await page.waitForSelector('#session-project:not([hidden]) option:nth-child(3)', { state: 'attached' });
+  await page.waitForSelector('.session-row:nth-child(3)');
   await shot(page.locator('main'), 'settings-page-multi.png');
   await shot(page.locator('#additional-field'), 'additional-projects.png');
-  await page.selectOption('#session-project', PACKAGING);
-  await page.waitForTimeout(300);
   await shot(page.locator('#session-card'), 'session-multi.png');
   await page.close();
 

@@ -132,8 +132,20 @@
     padding: 0.9rem 1rem;
     margin-bottom: 1.75rem;
   }
+  .session-card-title { font-weight: 600; margin-bottom: 0.25rem; }
+  .session-row { padding: 0.6rem 0; }
+  .session-row + .session-row { border-top: 1px solid var(--border); }
+  .session-row:last-child { padding-bottom: 0; }
   .session-head { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
-  .session-title { font-weight: 600; }
+  .session-name { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+  .session-tag {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0 0.45rem;
+  }
   .session-dot {
     width: 0.65rem;
     height: 0.65rem;
@@ -154,11 +166,25 @@
   }
   .session-actions { margin-left: auto; display: flex; gap: 0.5rem; }
   .session-actions button { padding: 0.4rem 1rem; }
-  #session-detail { margin-top: 0.35rem; }
-  #session-project { width: auto; max-width: 14rem; padding: 0.3rem 0.5rem; font-size: 0.85rem; }
-  #session-project[hidden] { display: none; }
-  #session-error { margin-top: 0.35rem; font-size: 0.85rem; color: var(--err); white-space: pre-wrap; }
-  #session-error:empty { display: none; }
+  .session-detail { margin-top: 0.3rem; }
+  .session-error { margin-top: 0.3rem; font-size: 0.85rem; color: var(--err); white-space: pre-wrap; }
+  .session-password { margin-top: 0.5rem; }
+  .session-password[hidden] { display: none; }
+  .session-password .hint { margin: 0 0 0.35rem; color: var(--warn); font-weight: 600; }
+  .session-password .field-row button { padding: 0.45rem 1rem; }
+  input[type=password] {
+    flex: 1;
+    min-width: 0;
+    padding: 0.5rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+  }
+  .session-error:empty { display: none; }
+  #structure-project { width: auto; max-width: 14rem; margin-left: 0.6rem; padding: 0.5rem 0.6rem; }
+  #structure-project[hidden] { display: none; }
 
   /* Project structure panel */
   #structure-panel { display: none; margin-top: 1.5rem; }
@@ -266,18 +292,8 @@
   </p>
 
   <section id="session-card" aria-live="polite">
-    <div class="session-head">
-      <span class="session-dot" id="session-dot"></span>
-      <span class="session-title">CODESYS session</span>
-      <span class="session-state" id="session-state">…</span>
-      <select id="session-project" title="Project whose session is shown" hidden></select>
-      <div class="session-actions">
-        <button type="button" id="session-start">Start</button>
-        <button type="button" class="btn-secondary" id="session-stop">Stop</button>
-      </div>
-    </div>
-    <div class="status" id="session-detail">&nbsp;</div>
-    <div id="session-error"></div>
+    <div class="session-card-title" id="session-card-title">CODESYS session</div>
+    <div id="session-list"><div class="status">Loading…</div></div>
   </section>
 
   <form id="settings-form">
@@ -328,6 +344,7 @@
 
     <button type="submit" id="save-button">Save</button>
     <button type="button" class="btn-secondary" id="structure-button">View project structure</button>
+    <select id="structure-project" title="Project whose structure is shown" hidden></select>
     <div id="banner"></div>
   </form>
 
@@ -583,7 +600,7 @@
       fields.maxProjects.value = data.maxProjects;
       renderAdditional(data.additionalProjects);
       showBanner('ok', 'Saved.');
-      refreshProjects();
+      refreshSessions();
     } catch {
       showBanner('err', 'Save failed: could not reach the server.');
     } finally {
@@ -748,47 +765,24 @@
   structureButton.addEventListener('click', loadStructure);
 
   // ---------------------------------------------------------------------
-  // Persistent CODESYS session: GET /session, polled quickly while something
-  // is in progress (starting / busy / stopping) and slowly otherwise.
-  // Start = POST /session/start (launches CODESYS and opens the project),
-  // Stop  = POST /session/stop  (closes the project, releasing the file).
+  // Persistent CODESYS sessions: one row per configured project, all from
+  // GET /sessions (default project first), polled quickly while any of them
+  // is in progress (starting / busy / stopping) and slowly otherwise. Each
+  // row has its own Start / Stop, so several sessions can be started at once:
+  //   Start = POST /session/start?project=<path> (launch CODESYS, open it)
+  //   Stop  = POST /session/stop?project=<path>  (close it, release the file)
   // ---------------------------------------------------------------------
-  const sessionDot = document.getElementById('session-dot');
-  const sessionState = document.getElementById('session-state');
-  const sessionDetail = document.getElementById('session-detail');
-  const sessionError = document.getElementById('session-error');
-  const sessionStart = document.getElementById('session-start');
-  const sessionStop = document.getElementById('session-stop');
-  const sessionProject = document.getElementById('session-project');
+  const sessionCardTitle = document.getElementById('session-card-title');
+  const sessionList = document.getElementById('session-list');
+  const structureProject = document.getElementById('structure-project');
 
-  // Which project the session card (and "View project structure") acts on. The selector only
-  // appears when more than one project is configured; '' means the default project.
+  // "View project structure" acts on the project picked next to it; the picker only
+  // appears when more than one project is configured. '' means the default project.
   function projectQuery() {
-    return sessionProject.value ? '?' + new URLSearchParams({ project: sessionProject.value }) : '';
+    return structureProject.value ? '?' + new URLSearchParams({ project: structureProject.value }) : '';
   }
 
-  async function refreshProjects() {
-    try {
-      const res = await fetch('/projects');
-      if (!res.ok) return;
-      const list = await res.json();
-      const previous = sessionProject.value;
-      sessionProject.innerHTML = '';
-      for (const p of list) {
-        sessionProject.appendChild(new Option(p.isDefault ? `${p.name} (default)` : p.name, p.isDefault ? '' : p.path));
-      }
-      sessionProject.hidden = list.length < 2;
-      sessionProject.value = Array.from(sessionProject.options).some((o) => o.value === previous) ? previous : '';
-      refreshSession();
-    } catch {
-      // The session card reports connectivity problems itself.
-    }
-  }
-
-  sessionProject.addEventListener('change', () => {
-    structurePanel.classList.remove('open');
-    refreshSession();
-  });
+  structureProject.addEventListener('change', () => structurePanel.classList.remove('open'));
 
   const STATE_LABELS = {
     disabled: 'Disabled',
@@ -801,7 +795,9 @@
   const ACTIVE_STATES = new Set(['starting', 'busy', 'stopping']);
 
   let sessionTimer = null;
-  let pendingAction = null;   // 'start' | 'stop' while our own request is outstanding
+  const pendingActions = new Map();   // projectPath -> 'start' | 'stop' while our own request is outstanding
+  const actionErrors = new Map();     // projectPath -> message from a failed start/stop
+  const rows = new Map();             // projectPath -> row elements
 
   function ago(iso) {
     const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
@@ -811,95 +807,223 @@
     return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
   }
 
-  function renderSession(s) {
-    let state = s.state;
-    // Our own start/stop request may be queued behind other work before the server reflects it.
-    if (pendingAction === 'start' && (state === 'stopped' || state === 'ready')) state = 'starting';
-    if (pendingAction === 'stop' && state !== 'stopped') state = 'stopping';
+  function makeRow(path) {
+    const el = (tag, className, text) => Object.assign(document.createElement(tag), { className, textContent: text || '' });
 
-    sessionDot.className = 'session-dot ' + (s.lastError && state === 'stopped' ? 'error' : state);
-    sessionState.textContent = STATE_LABELS[state] || state;
+    const row = el('div', 'session-row');
+    const head = el('div', 'session-head');
+    const dot = el('span', 'session-dot');
+    const name = el('span', 'session-name');
+    const tag = el('span', 'session-tag', 'default');
+    const state = el('span', 'session-state', '…');
+    const actions = el('div', 'session-actions');
+    const start = Object.assign(el('button', '', 'Start'), { type: 'button' });
+    const stop = Object.assign(el('button', 'btn-secondary', 'Stop'), { type: 'button' });
+    const detail = el('div', 'status session-detail', '\u00a0');
+    const error = el('div', 'session-error');
 
-    let detail;
+    // Shown when CODESYS could not open the project without (the right) password.
+    const passwordForm = Object.assign(el('form', 'session-password'), { hidden: true });
+    const passwordHint = el('div', 'hint');
+    const passwordLine = el('div', 'field-row');
+    const passwordInput = Object.assign(document.createElement('input'), {
+      type: 'password', placeholder: 'Project password', autocomplete: 'off',
+    });
+    const unlock = Object.assign(el('button', '', 'Unlock'), { type: 'submit' });
+    passwordLine.append(passwordInput, unlock);
+    passwordForm.append(passwordHint, passwordLine);
+
+    actions.append(start, stop);
+    head.append(dot, name, tag, state, actions);
+    row.append(head, detail, error, passwordForm);
+
+    start.addEventListener('click', () => sessionAction(path, 'start'));
+    stop.addEventListener('click', () => {
+      const msg = `Stop CODESYS for ${name.textContent}? The project is closed without saving pending `
+        + 'in-memory changes, and the next call will have to start CODESYS again.';
+      if (confirm(msg)) sessionAction(path, 'stop');
+    });
+
+    const r = { row, dot, name, tag, state, start, stop, detail, error, passwordForm, passwordHint, passwordInput, unlock, enabled: false };
+
+    passwordForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const password = passwordInput.value;
+      if (!password) return;
+      unlock.disabled = true;
+      try {
+        const res = await fetch('/projects/password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project: path, password }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          actionErrors.set(path, data.detail || `Could not set the password (HTTP ${res.status}).`);
+          return;
+        }
+        passwordInput.value = '';
+        // With a persistent session, opening the project right away tells at once whether
+        // the password is right; otherwise it's used by the next call.
+        if (r.enabled) await sessionAction(path, 'start');
+      } catch {
+        actionErrors.set(path, 'Could not reach the server.');
+      } finally {
+        unlock.disabled = false;
+        refreshSessions();
+      }
+    });
+
+    return r;
+  }
+
+  function describe(s, state) {
     switch (state) {
       case 'disabled':
-        detail = 'KeepSessionAlive is off: every call starts its own CODESYS instance.';
-        break;
+        return 'KeepSessionAlive is off: every call starts its own CODESYS instance.';
       case 'stopped':
-        detail = 'CODESYS is not running. The next call (or Start) launches it and opens the project.';
-        break;
+        return 'CODESYS is not running. The next call (or Start) launches it and opens the project.';
       case 'starting':
-        detail = s.busySince
+        return s.busySince
           ? `Launching CODESYS and opening the project… ${ago(s.busySince)}`
           : 'Launching CODESYS and opening the project…';
-        break;
       case 'stopping':
-        detail = s.currentScript
+        return s.currentScript
           ? `Stopping after ${s.currentScript} finishes…`
           : 'Closing the project and stopping CODESYS…';
-        break;
       case 'busy':
-        detail = `Running ${s.currentScript} for ${ago(s.busySince)} · pid ${s.processId} · up ${ago(s.startedAt)}`;
-        break;
+        return `Running ${s.currentScript} for ${ago(s.busySince)} · pid ${s.processId} · up ${ago(s.startedAt)}`;
       default:
-        detail = `Project open · pid ${s.processId} · up ${ago(s.startedAt)} · ${s.requestsServed} request${s.requestsServed === 1 ? '' : 's'} served`;
+        return `Project open · pid ${s.processId} · up ${ago(s.startedAt)} · ${s.requestsServed} request${s.requestsServed === 1 ? '' : 's'} served`;
     }
-    sessionDetail.textContent = detail;
-    sessionError.textContent = s.lastError || '';
+  }
 
-    const enabled = s.enabled;
-    sessionStart.hidden = !enabled;
-    sessionStop.hidden = !enabled;
-    sessionStart.disabled = pendingAction !== null || state !== 'stopped';
-    sessionStop.disabled = pendingAction !== null || state === 'stopped' || state === 'stopping';
+  // Renders one session row; returns the state shown (including our own pending action).
+  function renderRow(r, s, isDefault, multi) {
+    const pending = pendingActions.get(s.projectPath);
+    let state = s.state;
+    // Our own start/stop request may be queued behind other work before the server reflects it.
+    if (pending === 'start' && (state === 'stopped' || state === 'ready')) state = 'starting';
+    if (pending === 'stop' && state !== 'stopped') state = 'stopping';
 
+    // A failed open can leave CODESYS itself running (state "ready") without the project, so
+    // anything but a request in progress counts as locked.
+    const locked = !!s.passwordNeeded && !pending && !ACTIVE_STATES.has(state);
+
+    r.enabled = s.enabled;
+    r.dot.className = 'session-dot ' + (locked || (s.lastError && state === 'stopped') ? 'error' : state);
+    r.name.textContent = s.project || 'Project';
+    r.name.title = s.projectPath || '';
+    r.tag.hidden = !(multi && isDefault);
+    r.state.textContent = locked ? 'Password required' : (STATE_LABELS[state] || state);
+    r.detail.textContent = locked
+      ? 'CODESYS cannot open this project without its password.'
+      : describe(s, state);
+    // The password form explains a password failure; don't repeat it as an error.
+    r.error.textContent = locked ? '' : (actionErrors.get(s.projectPath) || s.lastError || '');
+
+    r.passwordForm.hidden = !locked;
+    r.passwordHint.textContent = s.passwordNeeded === 'password_invalid'
+      ? '🔒 The password was rejected. Enter the correct one.'
+      : '🔒 This project is password protected. Enter its password to open it.';
+
+    r.start.hidden = !s.enabled;
+    r.stop.hidden = !s.enabled;
+    r.start.disabled = pending !== undefined || (state !== 'stopped' && !locked);
+    r.stop.disabled = pending !== undefined || state === 'stopped' || state === 'stopping';
     return state;
   }
 
-  async function refreshSession() {
-    clearTimeout(sessionTimer);
-    let state = 'stopped';
-    try {
-      const res = await fetch('/session' + projectQuery());
-      if (res.ok) state = renderSession(await res.json());
-      else sessionDetail.textContent = 'Could not read the session state.';
-    } catch {
-      sessionDot.className = 'session-dot error';
-      sessionState.textContent = 'Unknown';
-      sessionDetail.textContent = 'Could not reach the server.';
+  function renderSessions(list) {
+    const multi = list.length > 1;
+    sessionCardTitle.textContent = multi ? 'CODESYS sessions' : 'CODESYS session';
+
+    if (list.length === 0) {
+      rows.clear();
+      sessionList.innerHTML = '';
+      sessionList.appendChild(Object.assign(document.createElement('div'), {
+        className: 'status',
+        textContent: 'No project configured yet. Pick one below and Save.',
+      }));
+      return [];
     }
-    const fast = pendingAction !== null || ACTIVE_STATES.has(state);
-    sessionTimer = setTimeout(refreshSession, fast ? 1000 : 5000);
+
+    // Rows are kept per project so a click never lands on a re-created button.
+    const seen = new Set();
+    const states = list.map((s, index) => {
+      seen.add(s.projectPath);
+      let r = rows.get(s.projectPath);
+      if (!r) {
+        r = makeRow(s.projectPath);
+        rows.set(s.projectPath, r);
+      }
+      sessionList.appendChild(r.row);   // (re)appending keeps the server's order
+      return renderRow(r, s, index === 0, multi);
+    });
+
+    for (const [path, r] of rows) {
+      if (!seen.has(path)) {
+        r.row.remove();
+        rows.delete(path);
+      }
+    }
+    for (const child of Array.from(sessionList.children)) {
+      if (!child.classList.contains('session-row')) child.remove();
+    }
+
+    renderStructureProjects(list);
+    return states;
   }
 
-  async function sessionAction(action) {
-    pendingAction = action;
-    sessionError.textContent = '';
-    refreshSession();
+  function renderStructureProjects(list) {
+    const previous = structureProject.value;
+    structureProject.innerHTML = '';
+    list.forEach((s, index) => {
+      structureProject.appendChild(new Option(index === 0 ? `${s.project} (default)` : s.project, index === 0 ? '' : s.projectPath));
+    });
+    structureProject.hidden = list.length < 2;
+    structureProject.value = Array.from(structureProject.options).some((o) => o.value === previous) ? previous : '';
+  }
 
+  async function refreshSessions() {
+    clearTimeout(sessionTimer);
+    let states = [];
     try {
-      const res = await fetch('/session/' + action + projectQuery(), { method: 'POST' });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        sessionError.textContent = data.detail || `${action === 'start' ? 'Start' : 'Stop'} failed (HTTP ${res.status}).`;
+      const res = await fetch('/sessions');
+      if (res.ok) {
+        states = renderSessions(await res.json());
+      } else {
+        sessionList.textContent = 'Could not read the session state.';
+        rows.clear();
       }
     } catch {
-      sessionError.textContent = 'Could not reach the server.';
+      sessionList.textContent = 'Could not reach the server.';
+      rows.clear();
+    }
+    const fast = pendingActions.size > 0 || states.some((st) => ACTIVE_STATES.has(st));
+    sessionTimer = setTimeout(refreshSessions, fast ? 1000 : 5000);
+  }
+
+  async function sessionAction(path, action) {
+    pendingActions.set(path, action);
+    actionErrors.delete(path);
+    refreshSessions();
+
+    try {
+      const res = await fetch(`/session/${action}?` + new URLSearchParams({ project: path }), { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        actionErrors.set(path, data.detail || `${action === 'start' ? 'Start' : 'Stop'} failed (HTTP ${res.status}).`);
+      }
+    } catch {
+      actionErrors.set(path, 'Could not reach the server.');
     } finally {
-      pendingAction = null;
-      await refreshSession();
+      pendingActions.delete(path);
+      await refreshSessions();
     }
   }
 
-  sessionStart.addEventListener('click', () => sessionAction('start'));
-  sessionStop.addEventListener('click', () => {
-    const msg = 'Stop CODESYS? The project is closed without saving pending in-memory changes, '
-      + 'and the next call will have to start CODESYS again.';
-    if (confirm(msg)) sessionAction('stop');
-  });
-
-  refreshSession();
-  refreshProjects();
+  refreshSessions();
 
   // ---------------------------------------------------------------------
   // Browse… file picker. There is no way for a web page to learn the real

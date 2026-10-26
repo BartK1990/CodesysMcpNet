@@ -61,10 +61,12 @@ project gets **its own CODESYS instance** with that project kept open:
 - removing a project from the list (or lowering **Max projects**) stops its CODESYS and
   releases the project file.
 
-The session card on the settings page gets a project selector to show, start and stop each
-project's session; **View project structure** uses the same selection.
+The session card on the settings page lists every configured project with its own state, so you
+can see at a glance which ones have CODESYS running. Each row has its own **Start** and
+**Stop**, so you can start several sessions at the same time. A project picker next to
+**View project structure** chooses whose structure is shown.
 
-![Session card with the project selector](../../../assets/screenshots/session-multi.png)
+![Session card with one row per project](../../../assets/screenshots/session-multi.png)
 
 Over REST, pass `project` to `/session`, `/session/start` and `/session/stop`, or read
 `GET /sessions` for all of them.
