@@ -23,7 +23,7 @@ change settings through the [settings page](/CodesysMcpNet/guides/settings-page/
   "PythonExecutablePath": "python",       // only used when UseCodesys is false
   "ScriptsDirectory": "Scripts",
   "WorkDirectory": "C:\\ProgramData\\CodesysMcpNet\\work",
-  "TimeoutSeconds": 600,                  // per script
+  "TimeoutSeconds": 1200,                  // per script
   "KeepTempFiles": false,                 // keep request/result files for troubleshooting
   "KeepSessionAlive": true,               // one long-lived CODESYS instead of one per call
   "StartSessionOnStartup": true,          // open the project as soon as the server starts

@@ -67,7 +67,7 @@ public sealed class CodesysOptions
     public string WorkDirectory { get; set; } = @"C:\ProgramData\CodesysMcpNet\work";
 
     /// <summary>Per-script timeout in seconds. CODESYS start-up alone can take a minute.</summary>
-    public int TimeoutSeconds { get; set; } = 600;
+    public int TimeoutSeconds { get; set; } = 1200;
 
     /// <summary>Keep the temporary request/result files for troubleshooting.</summary>
     public bool KeepTempFiles { get; set; }
