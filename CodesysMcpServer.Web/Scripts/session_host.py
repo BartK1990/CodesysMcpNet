@@ -42,6 +42,7 @@ import os
 import sys
 import time
 import traceback
+import warnings
 
 _HERE = os.path.dirname(os.path.abspath(globals().get("__file__") or sys.argv[0]))
 if _HERE not in sys.path:
@@ -169,7 +170,11 @@ def _exec_file(path, namespace):
     if runner is None and isinstance(__builtins__, dict):
         runner = __builtins__.get("execfile")
     if runner is not None:
-        runner(path, namespace)
+        # IronPython flags execfile with a Python 3 DeprecationWarning, which CODESYS
+        # reports on stderr as a script error for every request.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            runner(path, namespace)
         return
 
     handle = codecs.open(path, "r", "utf-8-sig")

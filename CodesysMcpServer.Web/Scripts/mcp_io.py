@@ -86,17 +86,20 @@ def emit(request, data=None, ok=True, error=None, echo=True):
     envelope = {"ok": bool(ok), "data": data, "error": error}
 
     try:
-        text = json.dumps(envelope, indent=2, sort_keys=True)
+        # ensure_ascii=False, then escaping by hand: IronPython's str is unicode, and its
+        # json ASCII encoder "decodes" any string holding U+0080..U+00FF (e.g. a degree
+        # sign or an umlaut in a comment) as UTF-8 and fails. The result stays pure ASCII.
+        text = _ascii_escape(json.dumps(envelope, indent=2, sort_keys=True, ensure_ascii=False))
     except Exception:
         # Last resort: never lose the failure reason because of a serialization problem.
-        text = json.dumps({
+        text = _ascii_escape(json.dumps({
             "ok": False,
             "data": None,
             "error": {
                 "message": "Result payload could not be serialized to JSON.",
                 "traceback": traceback.format_exc(),
             },
-        }, indent=2)
+        }, indent=2, ensure_ascii=False))
 
     if echo:
         print(RESULT_BEGIN)
@@ -197,6 +200,27 @@ def _to_text(value):
         return str(value)
     except Exception:
         return repr(value)
+
+
+def _ascii_escape(text):
+    """
+    Replace every non-ASCII character of serialized JSON with a \\uXXXX escape. Such
+    characters only occur inside JSON strings, where the escape means the same thing.
+    """
+    if isinstance(text, bytes):
+        text = text.decode("utf-8")
+    parts = []
+    for char in text:
+        code = ord(char)
+        if code < 0x80:
+            parts.append(char)
+        elif code > 0xFFFF:
+            # Wide builds hold astral characters as one code point; JSON wants a pair.
+            code -= 0x10000
+            parts.append(u"\\u%04x\\u%04x" % (0xD800 + (code >> 10), 0xDC00 + (code & 0x3FF)))
+        else:
+            parts.append(u"\\u%04x" % code)
+    return u"".join(parts)
 
 
 def _flush():
