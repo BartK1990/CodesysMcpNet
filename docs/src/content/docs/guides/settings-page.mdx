@@ -12,6 +12,7 @@ import busy from '../../../assets/screenshots/session-busy.png';
 import stopped from '../../../assets/screenshots/session-stopped.png';
 import browser from '../../../assets/screenshots/file-browser.png';
 import structure from '../../../assets/screenshots/project-structure.png';
+import additional from '../../../assets/screenshots/additional-projects.png';
 
 The server's web UI at [http://127.0.0.1:5088/](http://127.0.0.1:5088/) is where you choose
 **which CODESYS installation and which project** every MCP tool and REST endpoint acts on, and
@@ -19,8 +20,11 @@ where you can see and control the CODESYS session.
 
 <Image src={settings} alt="The settings page" width="640" />
 
-Set **Max projects** above 1 to configure further projects next to the default one; see
+Set **Max projects** above 1 to configure further projects next to the default one: an
+**Additional projects** list appears, and the session card gets a project selector. See
 [Multiple projects](/CodesysMcpNet/guides/multiple-projects/).
+
+<Image src={additional} alt="Additional projects list" width="640" />
 
 The page follows your system's light/dark preference:
 

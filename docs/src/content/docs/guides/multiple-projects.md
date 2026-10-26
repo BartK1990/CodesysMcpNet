@@ -14,6 +14,8 @@ nothing else. If you work with several projects at once, raise **Max projects**.
 2. Under **Additional projects**, click **Add project** and pick each further `.project` file.
 3. Click **Save**. Like every setting, it takes effect immediately.
 
+![Settings page with Max projects set to 3 and two additional projects](../../../assets/screenshots/settings-page-multi.png)
+
 Or, in `appsettings.production.json`:
 
 ```json
@@ -60,9 +62,12 @@ project gets **its own CODESYS instance** with that project kept open:
   releases the project file.
 
 The session card on the settings page gets a project selector to show, start and stop each
-project's session; **View project structure** uses the same selection. Over REST, pass
-`project` to `/session`, `/session/start` and `/session/stop`, or read `GET /sessions` for all
-of them.
+project's session; **View project structure** uses the same selection.
+
+![Session card with the project selector](../../../assets/screenshots/session-multi.png)
+
+Over REST, pass `project` to `/session`, `/session/start` and `/session/stop`, or read
+`GET /sessions` for all of them.
 
 With `KeepSessionAlive` off, every call still starts its own CODESYS, one at a time, whatever
 project it targets.

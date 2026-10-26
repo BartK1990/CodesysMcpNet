@@ -19,6 +19,8 @@ const OUT_DIR = fileURLToPath(new URL('../src/assets/screenshots/', import.meta.
 const EXE = 'C:\\Program Files\\CODESYS 3.5.21.30\\CODESYS\\Common\\CODESYS.exe';
 const PROJECT_DIR = 'C:\\Projects\\Conveyor';
 const PROJECT = `${PROJECT_DIR}\\Conveyor.project`;
+const PACKAGING = 'C:\\Projects\\Packaging\\Packaging.project';
+const PALLETIZER = 'C:\\Projects\\Palletizer\\Palletizer.project';
 
 const minutesAgo = (m) => new Date(Date.now() - m * 60_000).toISOString();
 
@@ -28,7 +30,27 @@ const settings = {
   profile: 'CODESYS V3.5 SP21 Patch 3',
   executableExists: true,
   projectExists: true,
+  maxProjects: 1,
+  maxProjectsLimit: 10,
+  additionalProjects: [],
 };
+
+// Max projects raised to 3, with two projects next to the default one.
+const multiSettings = {
+  ...settings,
+  maxProjects: 3,
+  additionalProjects: [
+    { path: PACKAGING, exists: true },
+    { path: PALLETIZER, exists: true },
+  ],
+};
+
+const projectList = (s) => [
+  { name: 'Conveyor', path: s.projectPath, isDefault: true, exists: true, session: 'ready' },
+  ...s.additionalProjects.map((p) => ({
+    name: p.path.split('\\').pop().replace(/\.project$/, ''), path: p.path, isDefault: false, exists: p.exists, session: 'ready',
+  })),
+];
 
 const profiles = [
   { name: 'CODESYS V3.5 SP20 Patch 0' },
@@ -90,13 +112,14 @@ const listing = {
   ],
 };
 
-async function newPage(browser, sessionState = 'ready', colorScheme = 'light') {
+async function newPage(browser, sessionState = 'ready', colorScheme = 'light', current = settings) {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, deviceScaleFactor: 2, colorScheme });
   const json = (route, body) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
-  await page.route('**/settings', (r) => json(r, settings));
+  await page.route('**/settings', (r) => json(r, current));
   await page.route('**/profiles?*', (r) => json(r, profiles));
-  await page.route('**/session', (r) => json(r, sessionStates[sessionState]));
-  await page.route('**/structure', (r) => json(r, structure));
+  await page.route('**/projects', (r) => json(r, projectList(current)));
+  await page.route(/\/session(\?.*)?$/, (r) => json(r, sessionStates[sessionState]));
+  await page.route(/\/structure(\?.*)?$/, (r) => json(r, structure));
   await page.route('**/files?*', (r) => json(r, listing));
   await page.goto(BASE_URL + '/');
   await page.waitForSelector('#app-version:not(:empty)');
@@ -138,6 +161,16 @@ try {
   }
   page = await newPage(browser, 'ready');
   await shot(page.locator('#session-card'), 'session-ready.png');
+  await page.close();
+
+  // Multiple projects: Max projects > 1, additional project rows, session project selector.
+  page = await newPage(browser, 'ready', 'light', multiSettings);
+  await page.waitForSelector('#session-project:not([hidden]) option:nth-child(3)', { state: 'attached' });
+  await shot(page.locator('main'), 'settings-page-multi.png');
+  await shot(page.locator('#additional-field'), 'additional-projects.png');
+  await page.selectOption('#session-project', PACKAGING);
+  await page.waitForTimeout(300);
+  await shot(page.locator('#session-card'), 'session-multi.png');
   await page.close();
 
   page = await browser.newPage({ viewport: { width: 1200, height: 1000 }, deviceScaleFactor: 2 });
