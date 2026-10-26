@@ -15,7 +15,7 @@
 	     and used by .github/workflows/release.yml as the release tag (v<Version>). Bump it here
 	     before running the release workflow. -->
 	<PropertyGroup>
-		<Version>1.0.0</Version>
+		<Version>1.1.0</Version>
 		<IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
 		<Product>CODESYS MCP Server</Product>
 	</PropertyGroup>
