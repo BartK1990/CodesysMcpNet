@@ -377,6 +377,12 @@ app.MapGet("/tasks", (string? project, CancellationToken ct) =>
     .WithTags("Read")
     .WithSummary("Tasks with kind, priority, interval, event trigger, watchdog and called POUs.");
 
+app.MapGet("/recipes", (string? definition, string? application, string? filter, string? recipe, int? offset, int? maxVariables, string? project, CancellationToken ct) =>
+        RunAsync(ct2 => ops.GetRecipesAsync(definition, application, filter, recipe, offset, maxVariables, project, ct2), ct))
+    .WithName("GetRecipes")
+    .WithTags("Read")
+    .WithSummary("Recipe Managers with their settings and definitions; with ?definition= its variables and recipe values (paged).");
+
 // 3. Update POU code ---------------------------------------------------------
 app.MapPost("/pou/update", (PouUpdateRequest request, string? project, CancellationToken ct) =>
         RunAsync(ct2 => ops.UpdatePouAsync(request, project, ct2), ct))
@@ -408,6 +414,12 @@ app.MapPost("/enum/create", (EnumCreateRequest request, string? project, Cancell
     .WithName("CreateEnum")
     .WithTags("Create")
     .WithSummary("Create a new ENUM data unit type with the given values.");
+
+app.MapPost("/recipes/update", (RecipeUpdateRequest request, string? project, CancellationToken ct) =>
+        RunAsync(ct2 => ops.UpdateRecipesAsync(request, project, ct2), ct))
+    .WithName("UpdateRecipes")
+    .WithTags("Update")
+    .WithSummary("Add/update/remove variables and create/update/remove recipes of a recipe definition.");
 
 // 5. Compile -----------------------------------------------------------------
 app.MapPost("/compile", (CompileRequest request, string? project, CancellationToken ct) =>

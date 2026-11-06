@@ -67,6 +67,7 @@ setup): <https://bartk1990.github.io/CodesysMcpNet/>
     dut_read.py   dut_create.py
     enum_read.py  enum_create.py
     search_text.py  task_config.py
+    recipes_read.py recipe_update.py
 ```
 
 ## Settings page
@@ -117,7 +118,9 @@ Every operation below acts on the default project configured on the
 | GET  | `/enum/content`  | `name` |
 | GET  | `/search`        | `pattern`, `regex?`, `caseSensitive?`, `ignoreComments?`, `maxResults?` (default 200, max 5000) |
 | GET  | `/tasks`         | – (kind, priority, interval, event trigger, watchdog and called POUs per task) |
+| GET  | `/recipes`       | `definition?`, `application?`, `filter?`, `recipe?`, `offset?`, `maxVariables?` (default 500, max 5000) — Recipe Managers, or one definition's variables and values (see [Recipe Manager](#recipe-manager)) |
 | POST | `/pou/update`    | `{ pouName, newCode, newDeclaration? }` |
+| POST | `/recipes/update` | `{ definition, application?, create?, variables?: [{variable,name?,comment?,minValue?,maxValue?}], removeVariables?, recipes?: [{name,values?}], removeRecipes? }` |
 | POST | `/pou/create`    | `{ name, type, language, returnType?, parentPath?, declaration?, implementation? }` |
 | POST | `/gvl/create`    | `{ name, parentPath?, variables?: [{name,type,initialValue?,comment?}] }` |
 | POST | `/dut/create`    | `{ name, fields: [{name,type,initialValue?,comment?}], baseType?, parentPath? }` |
@@ -143,7 +146,7 @@ client disconnected mid-run.
 
 ## MCP tools
 
-The same fourteen operations are exposed as MCP tools at `POST /mcp` (Streamable HTTP
+The same sixteen operations are exposed as MCP tools at `POST /mcp` (Streamable HTTP
 transport), registered in [Program.cs](McpServer/Program.cs) via
 `AddMcpServer().WithHttpTransport().WithTools<CodesysTools>()` and implemented in
 [Mcp/CodesysTools.cs](McpServer/Mcp/CodesysTools.cs). Tool names and inputs mirror the
@@ -159,6 +162,8 @@ REST routes:
 | `enum_content` | `GET /enum/content` |
 | `search_text` | `GET /search` |
 | `task_config` | `GET /tasks` |
+| `recipes` | `GET /recipes` |
+| `recipe_update` | `POST /recipes/update` |
 | `pou_update` | `POST /pou/update` |
 | `pou_create` | `POST /pou/create` |
 | `gvl_create` | `POST /gvl/create` |
@@ -169,6 +174,30 @@ REST routes:
 
 Every tool except `projects` takes an optional `project` argument (see
 [Multiple projects](#multiple-projects)).
+
+### Recipe Manager
+
+`recipes` (`GET /recipes`) without a `definition` lists every Recipe Manager: its application,
+its settings (storage type, file path, extension, separator and columns, load and write mode,
+recipe management in the PLC, ...) and each recipe definition with its variable count and
+recipe names. With a `definition` (name or path) it returns that definition's variables —
+variable expression, type, display name, comment, min/max — each with its value in every
+recipe, or only in `recipe`. Definitions can hold tens of thousands of variables, so the
+result is paged: `maxVariables` per call (default 500), `offset` to continue from the
+previous result's `nextOffset`, and `filter` (wildcard or substring on the expression or
+display name) to narrow it down.
+
+`recipe_update` (`POST /recipes/update`) changes one definition in a single call and saves the
+project, in this order: remove recipes, remove variables, add or update variables (fields
+left out stay unchanged), create recipes or set their values. With `create: true` a missing
+definition is created first. Names are matched case-insensitively and all of them are checked
+before anything changes, so a bad request leaves the definition as it was. Values are text,
+as the recipe editor shows them. CODESYS does not check them against min/max, so a value
+outside them is accepted and reported in `warnings`; so is a variable whose type does not
+resolve (not a full path to a global variable, or not compiled yet).
+
+The Recipe Manager itself has to exist: the scripting engine can add recipe definitions to
+it, but cannot add the manager to an application. Its settings are read-only here.
 
 ### Referenced libraries
 

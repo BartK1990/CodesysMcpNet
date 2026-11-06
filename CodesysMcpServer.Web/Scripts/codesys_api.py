@@ -598,6 +598,9 @@ TYPE_TASK = u"98a2708a-9b18-4f31-82ed-a1465b24fa2d"
 TYPE_PROPERTY = u"5a3b8626-d3e9-4f37-98b5-66420063d91e"
 TYPE_PROPERTY_ACCESSOR = u"792f2eb6-721e-4e64-ba20-bc98351056db"
 TYPE_TRANSITION = u"a10c6218-cb94-436f-91c6-e1652575253d"
+# Recipe management (CODESYS Recipes 4.6, confirmed against V3.5 SP21 Patch 3).
+TYPE_RECIPE_MANAGER = u"09ecc42e-586d-4a08-932f-5bdcac20bb55"
+TYPE_RECIPE_DEFINITION = u"6b3dfb6a-1865-4356-a39b-1fe0ef89651c"
 
 _MEMBER_KINDS = {
     TYPE_ACTION: "ACTION",
@@ -924,6 +927,332 @@ class Enum(ScriptObjectWrapper):
 
 
 # ===========================================================================
+# Recipes
+# ===========================================================================
+#
+# The engine's recipe driver (ScriptDriverRecipe) extends ScriptObjects:
+#   application.has_recipemanager / application.get_recipemanager()
+#   manager.is_recipemanager, its settings, manager.create_recipedefinition(name)
+#   definition.is_recipedefinition, definition.variables (add / remove / [i] / len),
+#   definition.recipes (create / remove / [i] / len)
+#   variable.variablename / type (read-only), name / comment / min_value / max_value
+#   recipe.recipename, get_value(variable) / set_value(variable, text), get_value_at(i)
+# Values are always strings. The engine does not check them against min/max (the runtime
+# limits or skips them on load, as the manager's write mode says), so that is only warned about.
+
+DEFAULT_RECIPE_PAGE = 500
+MAX_RECIPE_PAGE = 5000
+_RECIPE_INVALID_TYPE = u"<Invalid Type>"
+
+
+def _enum_name(value):
+    """'...LoadRecipeMode.load_by_variablename' -> 'load_by_variablename'."""
+    if value is None:
+        return None
+    return str(value).rsplit(u".", 1)[-1]
+
+
+def _text_or_none(value):
+    if value is None:
+        return None
+    text = u"%s" % value
+    return text if text != u"" else None
+
+
+def _to_float(text):
+    try:
+        return float((text or u"").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def recipe_limit_warning(variable, value, min_value, max_value):
+    """A warning when a numeric value lies outside the variable's numeric min/max, else None."""
+    number = _to_float(value)
+    if number is None:
+        return None
+    low, high = _to_float(min_value), _to_float(max_value)
+    if low is not None and number < low:
+        return u"%s = %s is below its minimum %s." % (variable, value, min_value)
+    if high is not None and number > high:
+        return u"%s = %s is above its maximum %s." % (variable, value, max_value)
+    return None
+
+
+def _same_name(left, right):
+    return (left or u"").strip().lower() == (right or u"").strip().lower()
+
+
+class RecipeManager(object):
+    """A Recipe Manager object: its settings and the recipe definitions below it."""
+
+    def __init__(self, obj, path):
+        self.Object = obj
+        self.Name = object_name(obj)
+        self.Path = path
+        self.Application = path.rsplit(u"/", 1)[0] if u"/" in path else u""
+        self.Definitions = []
+
+    def Settings(self):
+        obj = self.Object
+
+        def read(name, convert=None):
+            try:
+                value = getattr(obj, name)
+            except Exception as ex:
+                log("Recipe manager '%s': could not read %s: %s" % (self.Path, name, mcp_io._describe(ex)))
+                return None
+            return convert(value) if convert is not None else value
+
+        return {
+            "recipeManagementInPlc": read("recipe_mgmt_in_plc"),
+            "saveToFileAutomatically": read("save_to_file_automatically"),
+            "overwriteRecipesOnDownload": read("overwrite_recipes_on_download"),
+            "saveChangedRecipesOnly": read("save_changed_recipes_only"),
+            "loadRecipeMode": read("load_recipe_mode", _enum_name),
+            "writeRecipeMode": read("write_recipe_mode", _enum_name),
+            "storageType": read("storage_type", _enum_name),
+            "storageFilePath": read("storage_file_path", _text_or_none),
+            "storageFileExtension": read("storage_file_extension", _text_or_none),
+            "storageSeparator": read("storage_separator", _enum_name),
+            "storageColumns": read("storage_columns", lambda columns: [_enum_name(c) for c in columns]),
+        }
+
+    def Summary(self):
+        return {
+            "name": self.Name,
+            "path": self.Path,
+            "application": self.Application,
+            "settings": self.Settings(),
+            "definitions": [d.Summary() for d in self.Definitions],
+        }
+
+
+class RecipeDefinition(object):
+    """A recipe definition: a table of variables (rows) and recipes (value columns)."""
+
+    def __init__(self, obj, path, manager):
+        self.Object = obj
+        self.Name = object_name(obj)
+        self.Path = path
+        self.Manager = manager
+
+    # -- reading ---------------------------------------------------------
+    def _variable_handles(self):
+        return list(self.Object.variables)
+
+    def _recipe_handles(self):
+        return list(self.Object.recipes)
+
+    def RecipeNames(self):
+        return [r.recipename for r in self._recipe_handles()]
+
+    def Summary(self):
+        return {
+            "name": self.Name,
+            "path": self.Path,
+            "recipeManager": self.Manager.Path,
+            "application": self.Manager.Application,
+            "variableCount": len(self.Object.variables),
+            "recipeCount": len(self.Object.recipes),
+            "recipes": self.RecipeNames(),
+        }
+
+    @staticmethod
+    def _variable_info(index, handle):
+        return {
+            "index": index,
+            "variable": handle.variablename,
+            "type": _text_or_none(handle.type),
+            "name": _text_or_none(handle.name),
+            "comment": _text_or_none(handle.comment),
+            "minValue": _text_or_none(handle.min_value),
+            "maxValue": _text_or_none(handle.max_value),
+        }
+
+    def _select_recipes(self, recipe):
+        recipes = self._recipe_handles()
+        if not recipe:
+            return recipes
+        for handle in recipes:
+            if _same_name(handle.recipename, recipe):
+                return [handle]
+        raise LookupError(
+            "Recipe '" + recipe + "' was not found in recipe definition '" + self.Path + "'. Available: "
+            + (u", ".join(r.recipename for r in recipes) or u"<none>"))
+
+    def Content(self, name_filter=None, recipe=None, offset=0, limit=DEFAULT_RECIPE_PAGE):
+        """
+        Variables (rows) of the definition with their value in each recipe, one page at a time:
+        definitions can hold tens of thousands of variables. name_filter matches the variable
+        expression or its display name; recipe limits the values to one recipe.
+        """
+        offset = max(0, int(offset or 0))
+        limit = int(limit or DEFAULT_RECIPE_PAGE)
+        recipes = self._select_recipes(recipe)
+        handles = self._variable_handles()
+
+        if name_filter:
+            matches = name_matcher(name_filter)
+            selected = []
+            for index, handle in enumerate(handles):
+                # The display name is only read when the expression does not match already.
+                if matches(handle.variablename) or matches(handle.name):
+                    selected.append(index)
+        else:
+            selected = list(range(len(handles)))
+
+        page = selected[offset:offset + limit]
+        variables = []
+        for index in page:
+            info = self._variable_info(index, handles[index])
+            if recipes:
+                info["values"] = dict((r.recipename, r.get_value_at(index)) for r in recipes)
+            variables.append(info)
+
+        next_offset = offset + len(page)
+        return {
+            "name": self.Name,
+            "path": self.Path,
+            "recipeManager": self.Manager.Path,
+            "application": self.Manager.Application,
+            "recipes": [r.recipename for r in recipes] if recipe else self.RecipeNames(),
+            "filter": name_filter or None,
+            "totalVariableCount": len(handles),
+            "matchedVariableCount": len(selected),
+            "offset": offset,
+            "returnedVariableCount": len(variables),
+            "truncated": next_offset < len(selected),
+            "nextOffset": next_offset if next_offset < len(selected) else None,
+            "variables": variables,
+        }
+
+    # -- writing ---------------------------------------------------------
+    def Apply(self, variables=None, remove_variables=None, recipes=None, remove_recipes=None):
+        """
+        Applies one batch of changes, in this order: remove recipes, remove variables,
+        add/update variables, create/update recipes. Every name is checked before anything
+        changes, so a bad request leaves the definition untouched.
+        """
+        variables = variables or []
+        remove_variables = remove_variables or []
+        recipes = recipes or []
+        remove_recipes = remove_recipes or []
+
+        handles = self._variable_handles()
+        by_name = {}
+        for index, handle in enumerate(handles):
+            by_name[handle.variablename.strip().lower()] = handle.variablename
+        recipe_names = dict((r.recipename.strip().lower(), r.recipename) for r in self._recipe_handles())
+
+        # -- validate everything up front --
+        def key(text):
+            return (text or u"").strip().lower()
+
+        missing = [v for v in remove_variables if key(v) not in by_name]
+        if missing:
+            raise LookupError("Variable(s) to remove are not in recipe definition '%s': %s"
+                              % (self.Path, u", ".join(missing)))
+        missing = [r for r in remove_recipes if key(r) not in recipe_names]
+        if missing:
+            raise LookupError("Recipe(s) to remove are not in recipe definition '%s': %s. Available: %s"
+                              % (self.Path, u", ".join(missing), u", ".join(recipe_names.values()) or u"<none>"))
+
+        removed = set(key(v) for v in remove_variables)
+        known = set(k for k in by_name if k not in removed)
+        for change in variables:
+            if not (change.get("variable") or u"").strip():
+                raise ValueError("Every variable needs a 'variable' expression, e.g. 'GVL_Recipe.rSpeed'.")
+            known.add(key(change["variable"]))
+        for recipe in recipes:
+            if not (recipe.get("name") or u"").strip():
+                raise ValueError("Every recipe needs a name.")
+            unknown = [v for v in (recipe.get("values") or {}) if key(v) not in known]
+            if unknown:
+                raise LookupError(
+                    "Recipe '%s' sets values of variables that are not in recipe definition '%s': %s. "
+                    "Add them under variables first." % (recipe["name"], self.Path, u", ".join(unknown)))
+
+        changes = {
+            "recipesRemoved": [], "variablesRemoved": [], "variablesAdded": [],
+            "variablesUpdated": [], "recipesCreated": [], "recipesUpdated": [],
+        }
+        warnings = []
+        recipe_list = self.Object.recipes
+        variable_list = self.Object.variables
+
+        # -- apply --
+        for name in remove_recipes:
+            actual = recipe_names.pop(key(name))
+            recipe_list.remove(actual)
+            changes["recipesRemoved"].append(actual)
+
+        for name in remove_variables:
+            actual = by_name.pop(key(name))
+            variable_list.remove(actual)
+            changes["variablesRemoved"].append(actual)
+
+        if remove_variables:
+            handles = self._variable_handles()
+        index_of = dict((h.variablename.strip().lower(), i) for i, h in enumerate(handles))
+
+        for change in variables:
+            expression = change["variable"].strip()
+            existing = index_of.get(key(expression))
+            if existing is None:
+                handle = variable_list.add(expression)
+                index_of[key(expression)] = len(handles)
+                handles.append(handle)
+                changes["variablesAdded"].append(expression)
+                if (handle.type or u"") == _RECIPE_INVALID_TYPE:
+                    warnings.append(
+                        u"The type of '%s' could not be resolved: check that it is a full path to a "
+                        u"global variable (e.g. GVL.x or PLC_PRG.x) and compile." % expression)
+            else:
+                handle = handles[existing]
+                expression = handle.variablename
+
+            updated = False
+            for field, attribute in (("name", "name"), ("comment", "comment"),
+                                     ("minValue", "min_value"), ("maxValue", "max_value")):
+                value = change.get(field)
+                if value is not None:
+                    setattr(handle, attribute, value)
+                    updated = True
+            if updated and existing is not None:
+                changes["variablesUpdated"].append(expression)
+
+        for recipe in recipes:
+            name = recipe["name"].strip()
+            values = recipe.get("values") or {}
+            actual = recipe_names.get(key(name))
+            if actual is None:
+                handle = recipe_list.create(name)
+                recipe_names[key(name)] = name
+                changes["recipesCreated"].append({"name": name, "valuesSet": len(values)})
+            else:
+                handle = None
+                for candidate in self._recipe_handles():
+                    if candidate.recipename == actual:
+                        handle = candidate
+                        break
+                name = actual
+                changes["recipesUpdated"].append({"name": name, "valuesSet": len(values)})
+
+            for variable, value in sorted(values.items()):
+                variable_handle = handles[index_of[key(variable)]]
+                expression = variable_handle.variablename
+                text = u"" if value is None else (u"%s" % value)
+                handle.set_value(expression, text)
+                warning = recipe_limit_warning(
+                    expression, text, variable_handle.min_value, variable_handle.max_value)
+                if warning:
+                    warnings.append(u"Recipe '%s': %s" % (name, warning))
+
+        return changes, warnings
+
+
+# ===========================================================================
 # Compiler
 # ===========================================================================
 
@@ -1202,6 +1531,7 @@ class Project(object):
         self._applications = []
         self._folders = []
         self._task_configurations = []
+        self._recipe_managers = []
         self._other = []
 
     # -- scanning --------------------------------------------------------
@@ -1240,6 +1570,15 @@ class Project(object):
 
         if object_type(child) == TYPE_TASK_CONFIGURATION:
             self._task_configurations.append((child, path))
+            return
+
+        if object_type(child) == TYPE_RECIPE_MANAGER or _flag(child, "is_recipemanager"):
+            manager = RecipeManager(child, path)
+            for definition in _children(child):
+                if object_type(definition) == TYPE_RECIPE_DEFINITION or _flag(definition, "is_recipedefinition"):
+                    manager.Definitions.append(
+                        RecipeDefinition(definition, path + u"/" + object_name(definition), manager))
+            self._recipe_managers.append(manager)
             return
 
         # This engine version exposes no is_pou / is_dut / is_gvl flags (confirmed:
@@ -1300,6 +1639,13 @@ class Project(object):
     def Folders(self):
         self._scan()
         return self._folders
+
+    def RecipeManagers(self):
+        self._scan()
+        return self._recipe_managers
+
+    def RecipeDefinitions(self):
+        return [d for m in self.RecipeManagers() for d in m.Definitions]
 
     # -- lookup ----------------------------------------------------------
     def Find(self, collection, name):
@@ -1374,6 +1720,7 @@ class Project(object):
             "duts": [d.Summary() for d in self.DUTs],
             "enums": [e.Summary() for e in self.Enums],
             "applications": [path for _, path in self.Applications()],
+            "recipeDefinitions": [d.Path for d in self.RecipeDefinitions()],
             "folders": self.Folders(),
             "counts": {
                 "pous": len(self.Pous),
@@ -1523,6 +1870,68 @@ class Project(object):
             "Library '" + str(name) + "' is not referenced by the project. Referenced: "
             + (u", ".join(available) or u"<none>"))
 
+    # -- recipes ---------------------------------------------------------
+    def Recipes(self):
+        """Every Recipe Manager with its settings and the summary of each recipe definition."""
+        managers = self.RecipeManagers()
+        return {
+            "projectPath": self.Path,
+            "recipeManagers": [m.Summary() for m in managers],
+            "applicationsWithoutRecipeManager": [
+                path for _, path in self.Applications()
+                if not any(m.Application == path for m in managers)],
+        }
+
+    def _managers_of(self, application):
+        managers = self.RecipeManagers()
+        if not application:
+            return managers
+        selected = [m for m in managers
+                    if _same_name(m.Application, application)
+                    or _same_name(m.Application.rsplit(u"/", 1)[-1], application)
+                    or _same_name(m.Path, application)]
+        if not selected:
+            raise LookupError(
+                "No Recipe Manager in application '" + application + "'. Recipe Managers: "
+                + (u", ".join(m.Path for m in managers) or u"<none>"))
+        return selected
+
+    def FindRecipeDefinition(self, name, application=None):
+        """A recipe definition by name or path, optionally only in the given application."""
+        definitions = [d for m in self._managers_of(application) for d in m.Definitions]
+        found = [d for d in definitions if _same_name(d.Path, name)]
+        if not found:
+            found = [d for d in definitions if _same_name(d.Name, name)]
+        if len(found) == 1:
+            return found[0]
+        if len(found) > 1:
+            raise ValueError(
+                "Recipe definition '" + name + "' exists in more than one application: "
+                + u", ".join(d.Path for d in found) + ". Pass its path or the application.")
+        raise LookupError(
+            "Recipe definition '" + str(name) + "' was not found. Available: "
+            + (u", ".join(sorted(d.Path for d in definitions)) or u"<none>"))
+
+    def CreateRecipeDefinition(self, name, application=None):
+        """Adds a recipe definition to the Recipe Manager of the given (or the only) application."""
+        managers = self._managers_of(application)
+        if not managers:
+            raise LookupError(
+                "The project has no Recipe Manager. Add one to the application in CODESYS "
+                "(Add Object > Recipe Manager) first; the scripting engine cannot create it.")
+        if len(managers) > 1:
+            raise ValueError(
+                "The project has several Recipe Managers (" + u", ".join(m.Path for m in managers)
+                + "). Pass the application the recipe definition belongs to.")
+        manager = managers[0]
+        for existing in manager.Definitions:
+            if _same_name(existing.Name, name):
+                raise ValueError("Recipe definition '" + existing.Path + "' already exists.")
+        created = manager.Object.create_recipedefinition(name)
+        definition = RecipeDefinition(created, manager.Path + u"/" + object_name(created), manager)
+        manager.Definitions.append(definition)
+        return definition
+
     # -- creation --------------------------------------------------------
     def CreatePou(self, name, pou_type="PRG", language="ST", return_type=None, parent_path=None):
         parent = self.ResolveParent(parent_path)
@@ -1581,6 +1990,7 @@ class Project(object):
         self._applications = []
         self._folders = []
         self._task_configurations = []
+        self._recipe_managers = []
         self._other = []
 
     # -- lifecycle -------------------------------------------------------

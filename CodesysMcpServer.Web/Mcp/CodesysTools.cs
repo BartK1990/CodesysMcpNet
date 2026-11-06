@@ -91,6 +91,27 @@ public sealed class CodesysTools
         CancellationToken ct = default) =>
         Run(() => _ops.GetTaskConfigurationAsync(project, ct));
 
+    [McpServerTool(Name = "recipes")]
+    [Description("Recipe Manager contents. Without definition: every Recipe Manager (its application and settings: storage type/path/extension/separator/columns, load and write mode, recipe management in PLC, ...) with a summary of each recipe definition (variable count, recipe names). With definition: that definition's variables - variable expression, type, display name, comment, min/max - each with its value in every recipe (or only in recipe), one page at a time; use filter and offset for large definitions. Acts on the default project unless project names another configured one.")]
+    public Task<JsonElement> RecipesAsync(
+        [Description("Optional recipe definition name or path. Omit for the overview of all Recipe Managers.")] string? definition = null,
+        [Description("Optional variable filter (case-insensitive) on the variable expression or display name: a wildcard pattern (\"*Speed*\") or, without * or ?, a substring.")] string? filter = null,
+        [Description("Optional: return the values of this recipe only.")] string? recipe = null,
+        [Description("Index of the first matching variable to return (default 0). Pass the nextOffset of the previous result to page on.")] int? offset = null,
+        [Description("Maximum number of variables to return (1-5000, default 500). The result says when it was truncated.")] int? maxVariables = null,
+        [Description("Optional application (name or path) whose Recipe Manager holds the definition. Needed only when several applications have one with the same definition name.")] string? application = null,
+        [Description(ProjectDescription)] string? project = null,
+        CancellationToken ct = default) =>
+        Run(() => _ops.GetRecipesAsync(definition, application, filter, recipe, offset, maxVariables, project, ct));
+
+    [McpServerTool(Name = "recipe_update")]
+    [Description("Change a recipe definition of a Recipe Manager, then save the project: add or update variables (display name, comment, min/max), remove variables, create recipes or set their values, remove recipes - in one call. With create, the definition is created first when missing (the application must already have a Recipe Manager). Every name is checked before anything changes. Values outside a variable's min/max and variables whose type does not resolve are reported as warnings, not rejected. Acts on the default project unless project names another configured one.")]
+    public Task<JsonElement> RecipeUpdateAsync(
+        RecipeUpdateRequest request,
+        [Description(ProjectDescription)] string? project = null,
+        CancellationToken ct = default) =>
+        Run(() => _ops.UpdateRecipesAsync(request, project, ct));
+
     [McpServerTool(Name = "dut_content")]
     [Description("Fields of a structure/union DUT - in the project or, with library, in a referenced library. Acts on the default project unless project names another configured one.")]
     public Task<JsonElement> DutContentAsync(
