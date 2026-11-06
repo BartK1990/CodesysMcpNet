@@ -21,6 +21,11 @@ public sealed class CodesysTools
         "Optional: which configured project to act on, by name (file name without .project) or full path. " +
         "Omit for the default project. The projects tool lists the configured ones.";
 
+    private const string LibraryDescription =
+        "Optional: read from a library the project references instead of the project itself - its title, " +
+        "placeholder or namespace as the libraries tool lists them (e.g. \"Standard\"). Only libraries " +
+        "available as source (.library) can be read.";
+
     private readonly CodesysOperations _ops;
 
     public CodesysTools(CodesysOperations ops)
@@ -32,32 +37,42 @@ public sealed class CodesysTools
     [Description("Projects this server is configured for: name, path, whether it is the default one (used when a tool's project argument is omitted), whether the file exists, the state of its CODESYS session, and passwordNeeded when the project is password protected and its password has to be entered on the settings page. Pass a name from this list as the project argument of the other tools.")]
     public IReadOnlyList<ProjectSummary> Projects() => _ops.ListProjects();
 
-    [McpServerTool(Name = "structure")]
-    [Description("Full project structure: POUs, GVLs, DUTs and ENUMs. Acts on the default project unless project names another configured one.")]
-    public Task<JsonElement> StructureAsync(
+    [McpServerTool(Name = "libraries")]
+    [Description("Libraries the project references (project-level and per application): name, namespace, placeholder, requested and effective resolution (title, version, company), and source - the file the library can be read from (a .library in a library repository or next to the project; kind source or compiled), or null when none was found. Pass a title from this list as the library argument of structure, pou_content, gvl_content, dut_content, enum_content and search_text to read the library's code. Acts on the default project unless project names another configured one.")]
+    public Task<JsonElement> LibrariesAsync(
         [Description(ProjectDescription)] string? project = null,
         CancellationToken ct = default) =>
-        Run(() => _ops.GetStructureAsync(project, ct));
+        Run(() => _ops.ListLibrariesAsync(project, name: null, ct));
+
+    [McpServerTool(Name = "structure")]
+    [Description("Full project structure: POUs, GVLs, DUTs and ENUMs - or, with library, those of a referenced library. Acts on the default project unless project names another configured one.")]
+    public Task<JsonElement> StructureAsync(
+        [Description(ProjectDescription)] string? project = null,
+        [Description(LibraryDescription)] string? library = null,
+        CancellationToken ct = default) =>
+        Run(() => _ops.GetStructureAsync(project, library, ct));
 
     [McpServerTool(Name = "pou_content")]
-    [Description("Full ST source (declaration + implementation) of a POU, or of one of its methods, actions, properties or transitions. Acts on the default project unless project names another configured one.")]
+    [Description("Full ST source (declaration + implementation) of a POU, or of one of its methods, actions, properties or transitions - in the project or, with library, in a referenced library. Acts on the default project unless project names another configured one.")]
     public Task<JsonElement> PouContentAsync(
         [Description("POU name or path. Use \"Parent.Member\" for a method/action/property/transition (e.g. \"FB_Motor.Reset\"), and \"Parent.Property.Get\" for a property accessor.")] string name,
         [Description(ProjectDescription)] string? project = null,
+        [Description(LibraryDescription)] string? library = null,
         CancellationToken ct = default) =>
-        Run(() => _ops.GetPouContentAsync(name, project, ct));
+        Run(() => _ops.GetPouContentAsync(name, project, library, ct));
 
     [McpServerTool(Name = "gvl_content")]
-    [Description("Variables of a global variable list, with types and initial values. Pass a filter for large lists: the result then holds only matching variables and omits the full declaration text. Acts on the default project unless project names another configured one.")]
+    [Description("Variables of a global variable list, with types and initial values. Pass a filter for large lists: the result then holds only matching variables and omits the full declaration text. With library, reads a GVL of a referenced library. Acts on the default project unless project names another configured one.")]
     public Task<JsonElement> GvlContentAsync(
         [Description("GVL name.")] string name,
         [Description("Optional case-insensitive variable-name filter: a wildcard pattern (\"*Fault*\", \"x?Run\") or, without * or ?, a substring.")] string? filter = null,
         [Description(ProjectDescription)] string? project = null,
+        [Description(LibraryDescription)] string? library = null,
         CancellationToken ct = default) =>
-        Run(() => _ops.GetGvlContentAsync(name, filter, project, ct));
+        Run(() => _ops.GetGvlContentAsync(name, filter, project, library, ct));
 
     [McpServerTool(Name = "search_text")]
-    [Description("Search the declarations and implementations of all POUs (incl. methods, actions, properties, transitions), GVLs, DUTs and ENUMs. Returns one hit per matching line: POU, member, section, 1-based line number and the line text. Use a regex such as \"\\bxFault\\s*:=\" to find writes to a variable. Graphical (FBD/LD/CFC/SFC) bodies are not searchable and are listed in implementationNotTextual. Acts on the default project unless project names another configured one.")]
+    [Description("Search the declarations and implementations of all POUs (incl. methods, actions, properties, transitions), GVLs, DUTs and ENUMs - of the project or, with library, of a referenced library. Returns one hit per matching line: POU, member, section, 1-based line number and the line text. Use a regex such as \"\\bxFault\\s*:=\" to find writes to a variable. Graphical (FBD/LD/CFC/SFC) bodies are not searchable and are listed in implementationNotTextual. Acts on the default project unless project names another configured one.")]
     public Task<JsonElement> SearchTextAsync(
         [Description("Text to find. Plain text unless regex is true.")] string pattern,
         [Description("Treat pattern as a Python regular expression.")] bool regex = false,
@@ -65,8 +80,9 @@ public sealed class CodesysTools
         [Description("Skip matches inside comments and pragmas.")] bool ignoreComments = false,
         [Description("Maximum number of hits to return (1-5000, default 200). The result says when it was truncated.")] int? maxResults = null,
         [Description(ProjectDescription)] string? project = null,
+        [Description(LibraryDescription)] string? library = null,
         CancellationToken ct = default) =>
-        Run(() => _ops.SearchTextAsync(pattern, regex, caseSensitive, ignoreComments, maxResults, project, ct));
+        Run(() => _ops.SearchTextAsync(pattern, regex, caseSensitive, ignoreComments, maxResults, project, library, ct));
 
     [McpServerTool(Name = "task_config")]
     [Description("Task configuration of every application: per task its kind (Cyclic/Event/Status/Freewheeling/External), priority, interval (also normalized to ms), event variable or external event, watchdog, and the POUs it calls, in call order. Only the POUs attached directly to the task are listed, not what they call in turn. Acts on the default project unless project names another configured one.")]
@@ -76,20 +92,22 @@ public sealed class CodesysTools
         Run(() => _ops.GetTaskConfigurationAsync(project, ct));
 
     [McpServerTool(Name = "dut_content")]
-    [Description("Fields of a structure/union DUT. Acts on the default project unless project names another configured one.")]
+    [Description("Fields of a structure/union DUT - in the project or, with library, in a referenced library. Acts on the default project unless project names another configured one.")]
     public Task<JsonElement> DutContentAsync(
         [Description("DUT name.")] string name,
         [Description(ProjectDescription)] string? project = null,
+        [Description(LibraryDescription)] string? library = null,
         CancellationToken ct = default) =>
-        Run(() => _ops.GetDutContentAsync(name, project, ct));
+        Run(() => _ops.GetDutContentAsync(name, project, library, ct));
 
     [McpServerTool(Name = "enum_content")]
-    [Description("Values of an ENUM DUT. Acts on the default project unless project names another configured one.")]
+    [Description("Values of an ENUM DUT - in the project or, with library, in a referenced library. Acts on the default project unless project names another configured one.")]
     public Task<JsonElement> EnumContentAsync(
         [Description("ENUM name.")] string name,
         [Description(ProjectDescription)] string? project = null,
+        [Description(LibraryDescription)] string? library = null,
         CancellationToken ct = default) =>
-        Run(() => _ops.GetEnumContentAsync(name, project, ct));
+        Run(() => _ops.GetEnumContentAsync(name, project, library, ct));
 
     [McpServerTool(Name = "pou_update")]
     [Description("Replace a POU's implementation (and optionally its declaration).")]

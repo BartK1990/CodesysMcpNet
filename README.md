@@ -110,6 +110,7 @@ Every operation below acts on the default project configured on the
 | Method | Route | Body / Query |
 |---|---|---|
 | GET  | `/structure`     | – |
+| GET  | `/libraries`     | `name?` — library references, each with the file it can be read from (see [Referenced libraries](#referenced-libraries)) |
 | GET  | `/pou/content`   | `name` — a POU, or `Parent.Member` for a method/action/property/transition |
 | GET  | `/gvl/content`   | `name`, `filter?` (`*Fault*` wildcard or substring; omits the full declaration) |
 | GET  | `/dut/content`   | `name` |
@@ -142,7 +143,7 @@ client disconnected mid-run.
 
 ## MCP tools
 
-The same thirteen operations are exposed as MCP tools at `POST /mcp` (Streamable HTTP
+The same fourteen operations are exposed as MCP tools at `POST /mcp` (Streamable HTTP
 transport), registered in [Program.cs](McpServer/Program.cs) via
 `AddMcpServer().WithHttpTransport().WithTools<CodesysTools>()` and implemented in
 [Mcp/CodesysTools.cs](McpServer/Mcp/CodesysTools.cs). Tool names and inputs mirror the
@@ -151,6 +152,7 @@ REST routes:
 | Tool | Equivalent REST route |
 |---|---|
 | `structure` | `GET /structure` |
+| `libraries` | `GET /libraries` |
 | `pou_content` | `GET /pou/content` |
 | `gvl_content` | `GET /gvl/content` |
 | `dut_content` | `GET /dut/content` |
@@ -167,6 +169,36 @@ REST routes:
 
 Every tool except `projects` takes an optional `project` argument (see
 [Multiple projects](#multiple-projects)).
+
+### Referenced libraries
+
+The code of a library lives in the library, not in the project, so the project tools never
+see it. `libraries` (`GET /libraries`) lists the project's library references — the
+project-level library manager and every application's — with their placeholder, namespace,
+requested and effective resolution (`title`, `version`, `company`), and `source`: the file
+the library can be read from, or null.
+
+The source file is looked for, in this order:
+
+1. in the library repositories (`<root>/<company>/<title>/<version>/`, the newest version for
+   a `*` reference);
+2. next to the project, named after the library (`Title.library`, `Title_1.2.3.library`;
+   spaces, underscores and dashes are ignored, the version-matching file wins).
+
+A source `.library` beats a compiled one in the same place.
+
+The read tools — `structure`, `pou_content`, `gvl_content`, `dut_content`, `enum_content` and
+`search_text` (and their REST routes) — take an optional `library` argument: a title,
+placeholder or namespace from that list. The operation then runs on the library's source
+file instead of the project. The file is always the one the configured project's own
+reference resolves to; a caller can never point the server at another file. Compiled
+libraries carry no readable source and are rejected with a clear message. Library access is
+read-only: the create/update tools and `compile` act on projects only.
+
+CODESYS only exposes a project's object tree when it is the primary project, so the
+library is opened in the project's CODESYS session in place of the project (with
+`MaxProjects` = 1) or in a session of its own (with more). With a single session, alternating
+between project and library reads therefore reloads the project each time.
 
 A failed validation or script run raises `McpException`, so its message reaches the
 calling model as a tool error — the same detail the REST layer puts in a ProblemDetails
