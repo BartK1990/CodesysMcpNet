@@ -95,6 +95,88 @@ public sealed class CodesysOperations
             projectPath => new { projectPath, name = string.IsNullOrWhiteSpace(name) ? null : name.Trim() },
             ct);
 
+    public const int MaxRecipeVariables = 5000;
+
+    /// <summary>
+    /// Without <paramref name="definition"/>: every Recipe Manager with its settings and a summary
+    /// of its recipe definitions. With it: that definition's variables and their recipe values,
+    /// filtered and paged (definitions can hold tens of thousands of variables).
+    /// </summary>
+    public Task<JsonElement> GetRecipesAsync(
+        string? definition, string? application, string? filter, string? recipe, int? offset, int? maxVariables,
+        string? project, CancellationToken ct)
+    {
+        if (offset is < 0)
+            throw new CodesysValidationException("offset must not be negative.");
+
+        if (maxVariables is < 1 or > MaxRecipeVariables)
+            throw new CodesysValidationException($"maxVariables must be between 1 and {MaxRecipeVariables}.");
+
+        return RunAsync(
+            "recipes_read.py",
+            project,
+            projectPath => new
+            {
+                projectPath,
+                definition = Blank(definition),
+                application = Blank(application),
+                filter = Blank(filter),
+                recipe = Blank(recipe),
+                offset = offset ?? 0,
+                maxVariables = maxVariables ?? 500,
+            },
+            ct);
+    }
+
+    public Task<JsonElement> UpdateRecipesAsync(RecipeUpdateRequest request, string? project, CancellationToken ct)
+    {
+        RequestValidator.Validate(request);
+
+        if (request.Variables?.Any(v => string.IsNullOrWhiteSpace(v.Variable)) == true)
+            throw new CodesysValidationException("Every entry of variables needs a variable expression.");
+
+        if (request.Recipes?.Any(r => string.IsNullOrWhiteSpace(r.Name)) == true)
+            throw new CodesysValidationException("Every entry of recipes needs a name.");
+
+        var nothingToDo = !request.Create
+            && (request.Variables?.Count ?? 0) == 0
+            && (request.RemoveVariables?.Count ?? 0) == 0
+            && (request.Recipes?.Count ?? 0) == 0
+            && (request.RemoveRecipes?.Count ?? 0) == 0;
+        if (nothingToDo)
+            throw new CodesysValidationException(
+                "Nothing to change: pass variables, removeVariables, recipes or removeRecipes (or create).");
+
+        return RunAsync(
+            "recipe_update.py",
+            project,
+            projectPath => new
+            {
+                projectPath,
+                definition = request.Definition.Trim(),
+                application = Blank(request.Application),
+                create = request.Create,
+                variables = request.Variables?.Select(v => new
+                {
+                    variable = v.Variable.Trim(),
+                    name = v.Name,
+                    comment = v.Comment,
+                    minValue = v.MinValue,
+                    maxValue = v.MaxValue,
+                }),
+                removeVariables = request.RemoveVariables,
+                recipes = request.Recipes?.Select(r => new
+                {
+                    name = r.Name.Trim(),
+                    values = r.Values ?? new Dictionary<string, string?>(),
+                }),
+                removeRecipes = request.RemoveRecipes,
+            },
+            ct);
+    }
+
+    private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     public Task<JsonElement> GetTaskConfigurationAsync(string? project, CancellationToken ct) =>
         RunAsync("task_config.py", project, projectPath => new { projectPath }, ct);
 

@@ -28,7 +28,9 @@ default project.
 | GET  | `/enum/content`  | `name` |
 | GET  | `/search`        | `pattern`, `regex?`, `caseSensitive?`, `ignoreComments?`, `maxResults?` (default 200, max 5000) |
 | GET  | `/tasks`         | – |
+| GET  | `/recipes`       | `definition?`, `application?`, `filter?`, `recipe?`, `offset?`, `maxVariables?` (default 500, max 5000) |
 | POST | `/pou/update`    | `{ pouName, newCode, newDeclaration? }` |
+| POST | `/recipes/update` | `{ definition, application?, create?, variables?: [{variable,name?,comment?,minValue?,maxValue?}], removeVariables?, recipes?: [{name,values?}], removeRecipes? }` |
 | POST | `/pou/create`    | `{ name, type, language, returnType?, parentPath?, declaration?, implementation? }` |
 | POST | `/gvl/create`    | `{ name, parentPath?, variables?: [{name,type,initialValue?,comment?}] }` |
 | POST | `/dut/create`    | `{ name, fields: [{name,type,initialValue?,comment?}], baseType?, parentPath? }` |

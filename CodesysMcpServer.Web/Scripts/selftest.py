@@ -257,9 +257,26 @@ def test_libraries():
         shutil.rmtree(root)
 
 
+def test_recipes():
+    print("Recipes")
+    check("enum name", api._enum_name(u"_3S.CoDeSys.ScriptEngine.BasicFunctionality.LoadRecipeMode.load_by_variablename"),
+          u"load_by_variablename")
+    check("enum name plain", api._enum_name(u"textual"), u"textual")
+    check("enum name none", api._enum_name(None), None)
+    check("empty text is none", api._text_or_none(u""), None)
+    check("within limits", api.recipe_limit_warning(u"G.r", u"50", u"0", u"100"), None)
+    check("above max", api.recipe_limit_warning(u"G.r", u"150", u"0", u"100"),
+          u"G.r = 150 is above its maximum 100.")
+    check("below min", api.recipe_limit_warning(u"G.r", u"-1.5", u"0", None),
+          u"G.r = -1.5 is below its minimum 0.")
+    check("no limits", api.recipe_limit_warning(u"G.r", u"5", u"", u""), None)
+    check("non-numeric value", api.recipe_limit_warning(u"G.x", u"TRUE", u"0", u"1"), None)
+    check("non-numeric limit", api.recipe_limit_warning(u"G.t", u"5", u"T#1s", u"T#2s"), None)
+
+
 def main():
     for test in (test_gvl, test_struct, test_enum, test_alias, test_pou_kind, test_round_trips,
-                 test_name_filter, test_search, test_interval, test_libraries):
+                 test_name_filter, test_search, test_interval, test_libraries, test_recipes):
         test()
 
     print("")
