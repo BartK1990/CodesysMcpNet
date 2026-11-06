@@ -957,7 +957,11 @@
         r = makeRow(s.projectPath);
         rows.set(s.projectPath, r);
       }
-      sessionList.appendChild(r.row);   // (re)appending keeps the server's order
+      // Keep the server's order, but only move a row that is out of place: moving a node
+      // detaches it, which takes the focus away from the password field inside it on
+      // every status poll.
+      const current = sessionList.children[index];
+      if (current !== r.row) sessionList.insertBefore(r.row, current || null);
       return renderRow(r, s, index === 0, multi);
     });
 

@@ -27,6 +27,7 @@ from __future__ import print_function
 
 import bisect
 import fnmatch
+import os
 import re
 import time
 
@@ -1461,6 +1462,67 @@ class Project(object):
             })
         return {"projectPath": self.Path, "taskConfigurations": configurations}
 
+    # -- libraries -------------------------------------------------------
+    def LibraryManagers(self):
+        """(scope path, library manager) for the project-level (POU pool) and every application's manager."""
+        managers = []
+        seen = set()
+
+        def add(scope, owner):
+            getter = getattr(owner, "get_library_manager", None)
+            if getter is None:
+                return
+            try:
+                manager = getter()
+            except Exception as ex:
+                log("No library manager in '%s': %s" % (scope or "<project>", mcp_io._describe(ex)))
+                return
+            if manager is None:
+                return
+            key = _object_key(manager)
+            if key in seen:
+                return
+            seen.add(key)
+            managers.append((scope, manager))
+
+        add(u"", self.Object)
+        for application, path in self.Applications():
+            add(path, application)
+        return managers
+
+    def LibraryReferences(self):
+        """
+        Every library reference of every library manager, with the source file the library can
+        be read from (a .library in a library repository or next to the project), if any.
+        """
+        project_dir = os.path.dirname(os.path.abspath(self.Path))
+        references = []
+        for scope, manager in self.LibraryManagers():
+            try:
+                items = list(manager.references)
+            except Exception as ex:
+                log("Could not read the references of '%s': %s" % (scope or "<project>", mcp_io._describe(ex)))
+                continue
+            for reference in items:
+                info = _library_reference_info(reference)
+                info["scope"] = scope or u"<project>"
+                info["source"] = find_library_source(
+                    info.get("title"), info.get("version"), info.get("company"), project_dir)
+                references.append(info)
+        return {"projectPath": self.Path, "count": len(references), "libraries": references}
+
+    def FindLibrary(self, name):
+        """The reference matching name (placeholder, title, namespace, reference name or resolution)."""
+        listing = self.LibraryReferences()["libraries"]
+        wanted = (name or u"").strip().lower()
+        for info in listing:
+            if wanted in _library_aliases(info):
+                return info
+        available = sorted(set(info.get("title") or info.get("name") or u"?" for info in listing))
+        raise LookupError(
+            "Library '" + str(name) + "' is not referenced by the project. Referenced: "
+            + (u", ".join(available) or u"<none>"))
+
     # -- creation --------------------------------------------------------
     def CreatePou(self, name, pou_type="PRG", language="ST", return_type=None, parent_path=None):
         parent = self.ResolveParent(parent_path)
@@ -1537,6 +1599,205 @@ class Project(object):
         except Exception as ex:
             log("Could not close the project: " + str(ex))
             return False
+
+
+# ===========================================================================
+# Library helpers
+# ===========================================================================
+
+# "Title, 1.2.3.4 (Company)" - how CODESYS writes a library resolution.
+_RESOLUTION_RE = re.compile(r"^\s*(?P<title>.+?)\s*,\s*(?P<version>[^\s(]+)\s*\((?P<company>.*)\)\s*$")
+
+SOURCE_LIBRARY_EXTENSIONS = (".library",)
+COMPILED_LIBRARY_EXTENSIONS = (".compiled-library", ".compiled-library-v3")
+DEFAULT_LIBRARY_REPOSITORY = r"C:\ProgramData\CODESYS\Managed Libraries"
+
+
+def parse_library_resolution(text):
+    """Split "Title, 1.2.3.4 (Company)" into its parts; None for anything else."""
+    match = _RESOLUTION_RE.match(text or u"")
+    if not match:
+        return None
+    return {
+        "title": match.group("title").strip(),
+        "version": match.group("version").strip(),
+        "company": match.group("company").strip(),
+    }
+
+
+def _object_key(obj):
+    for name in ("guid", "id"):
+        value = getattr(obj, name, None)
+        if value is not None:
+            return str(value)
+    return str(id(obj))
+
+
+def _library_reference_info(reference):
+    def text(name):
+        try:
+            value = getattr(reference, name, None)
+        except Exception:
+            return None
+        if value is None or callable(value):
+            return None
+        return mcp_io._to_text(value)
+
+    def flag(name):
+        try:
+            return bool(getattr(reference, name, False))
+        except Exception:
+            return False
+
+    info = {
+        "name": text("name"),
+        "placeholderName": text("placeholder_name"),
+        "namespace": text("namespace"),
+        "isPlaceholder": flag("is_placeholder"),
+        "isManaged": flag("is_managed"),
+        "isRedirected": flag("is_redirected"),
+        "optional": flag("optional"),
+        "systemLibrary": flag("system_library"),
+        "qualifiedOnly": flag("qualified_only"),
+        "effectiveResolution": text("effective_resolution"),
+        "defaultResolution": text("default_resolution"),
+        "resolutionInfo": text("resolution_info"),
+    }
+    parsed = (parse_library_resolution(info["effectiveResolution"])
+              or parse_library_resolution(info["defaultResolution"])
+              or parse_library_resolution(info["name"]))
+    info["title"] = parsed["title"] if parsed else None
+    info["version"] = parsed["version"] if parsed else None
+    info["company"] = parsed["company"] if parsed else None
+    return info
+
+
+def _library_aliases(info):
+    aliases = set()
+    for key in ("name", "placeholderName", "namespace", "title", "effectiveResolution", "defaultResolution"):
+        value = info.get(key)
+        if value:
+            aliases.add(value.strip().lower())
+            aliases.add(value.strip().lstrip(u"#").lower())
+    return aliases
+
+
+def _library_repository_roots():
+    roots = []
+    manager = resolve("librarymanager", required=False)
+    if manager is not None:
+        try:
+            for repository in manager.repositories:
+                root = getattr(repository, "root_folder", None)
+                if root:
+                    roots.append(mcp_io._to_text(root))
+        except Exception as ex:
+            log("Could not list library repositories: " + mcp_io._describe(ex))
+    if not roots:
+        roots.append(DEFAULT_LIBRARY_REPOSITORY)
+    return roots
+
+
+def _version_key(text):
+    parts = []
+    for part in re.split(r"[.\-]", text or u""):
+        parts.append((0, int(part), u"") if part.isdigit() else (1, 0, part))
+    return parts
+
+
+def _library_files(directory):
+    """(path, kind) for every library file directly inside directory."""
+    found = []
+    try:
+        names = os.listdir(directory)
+    except Exception:
+        return found
+    for name in names:
+        path = os.path.join(directory, name)
+        lowered = name.lower()
+        if not os.path.isfile(path):
+            continue
+        if lowered.endswith(SOURCE_LIBRARY_EXTENSIONS):
+            found.append((path, "source"))
+        elif lowered.endswith(COMPILED_LIBRARY_EXTENSIONS):
+            found.append((path, "compiled"))
+    return found
+
+
+def _prefer_source(candidates):
+    sources = [c for c in candidates if c[1] == "source"]
+    return (sources or candidates)[0] if candidates else None
+
+
+def _alnum(text):
+    return u"".join(c for c in (text or u"").lower() if c.isalnum())
+
+
+def _strip_library_extension(name):
+    lowered = name.lower()
+    for extension in COMPILED_LIBRARY_EXTENSIONS + SOURCE_LIBRARY_EXTENSIONS:
+        if lowered.endswith(extension):
+            return name[:-len(extension)]
+    return name
+
+
+def find_library_source(title, version, company, project_dir, repository_roots=None):
+    """
+    Where a referenced library can be read from:
+      1. an installed copy in a library repository: <root>/<company>/<title>/<version>/,
+         the newest version when the reference asks for "*";
+      2. a file next to the project named after the library (Title.library,
+         Title_1.2.3.library, ...), the version-matching one first.
+    A source .library beats a compiled one in the same place. Returns
+    {"file", "kind": "source"|"compiled", "location": "repository"|"projectFolder"} or None.
+    """
+    if not title:
+        return None
+
+    exact_version = version if version and version != u"*" else None
+
+    if repository_roots is None:
+        repository_roots = _library_repository_roots()
+
+    for root in repository_roots:
+        if not company:
+            break
+        title_dir = os.path.join(root, company, title)
+        if not os.path.isdir(title_dir):
+            continue
+        if exact_version:
+            versions = [exact_version]
+        else:
+            try:
+                versions = sorted(os.listdir(title_dir), key=_version_key, reverse=True)
+            except Exception:
+                versions = []
+        for candidate in versions:
+            chosen = _prefer_source(_library_files(os.path.join(title_dir, candidate)))
+            if chosen:
+                return {"file": chosen[0], "kind": chosen[1], "location": "repository"}
+
+    if project_dir:
+        # Compare without separators, so "My Lib", "My_Lib" and "MyLib" all match; whatever
+        # follows the title must be a version (or nothing), so "Lib" never matches "LibExtra".
+        wanted = _alnum(title)
+        version_text = _alnum(exact_version) if exact_version else None
+        exact = []
+        loose = []
+        for path, kind in _library_files(project_dir):
+            stem = _alnum(_strip_library_extension(os.path.basename(path)))
+            if not stem.startswith(wanted):
+                continue
+            rest = stem[len(wanted):]
+            if version_text and rest == version_text:
+                exact.append((path, kind))
+            elif rest == u"" or rest[0].isdigit():
+                loose.append((path, kind))
+        chosen = _prefer_source(exact) or _prefer_source(sorted(loose, reverse=True))
+        if chosen:
+            return {"file": chosen[0], "kind": chosen[1], "location": "projectFolder"}
+
+    return None
 
 
 # ===========================================================================

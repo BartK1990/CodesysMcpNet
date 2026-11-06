@@ -204,9 +204,62 @@ def test_interval():
     check("empty", api._interval_ms(None, u"ms"), None)
 
 
+def test_libraries():
+    import shutil
+    import tempfile
+
+    print("Library resolution and source lookup")
+    check("resolution", api.parse_library_resolution(u"Standard, 3.5.18.0 (System)"),
+          {"title": u"Standard", "version": u"3.5.18.0", "company": u"System"})
+    check("resolution wildcard", api.parse_library_resolution(u"Standard, * (System)"),
+          {"title": u"Standard", "version": u"*", "company": u"System"})
+    check("resolution title with comma",
+          api.parse_library_resolution(u"Util, Extra, 1.0 (ACME)")["title"], u"Util, Extra")
+    check("not a resolution", api.parse_library_resolution(u"#Standard"), None)
+
+    root = tempfile.mkdtemp()
+    try:
+        def touch(*parts):
+            path = os.path.join(root, *parts)
+            if not os.path.isdir(os.path.dirname(path)):
+                os.makedirs(os.path.dirname(path))
+            open(path, "w").close()
+            return path
+
+        repo = os.path.join(root, "repo")
+        project_dir = os.path.join(root, "project")
+        compiled = touch("repo", "ACME", "Lib", "1.0.0.0", "Lib.compiled-library-v3")
+        newest = touch("repo", "ACME", "Lib", "1.10.0.0", "Lib.library")
+        touch("repo", "ACME", "Lib", "1.2.0.0", "Lib.library")
+        local = touch("project", "HCU_Core_3.0.2.library")
+        touch("project", "HCU_Core_3.0.1.library")
+        touch("project", "Unrelated.library")
+
+        found = api.find_library_source(u"Lib", u"1.0.0.0", u"ACME", project_dir, [repo])
+        check("exact version, compiled only", (found["file"], found["kind"], found["location"]),
+              (compiled, "compiled", "repository"))
+        found = api.find_library_source(u"Lib", u"*", u"ACME", project_dir, [repo])
+        check("wildcard picks newest version", found["file"], newest)
+        found = api.find_library_source(u"HCU_Core", u"3.0.2", u"Opoura", project_dir, [repo])
+        check("project folder, version match", (found["file"], found["location"]), (local, "projectFolder"))
+        found = api.find_library_source(u"HCU Core", u"9.9.9", u"Opoura", project_dir, [repo])
+        check("project folder, spaced title, other version", found["location"], "projectFolder")
+        check("prefix of another title", api.find_library_source(u"Unrel", None, u"X", project_dir, [repo]), None)
+        check("nothing found", api.find_library_source(u"Missing", u"1.0", u"ACME", project_dir, [repo]), None)
+        check("no title", api.find_library_source(None, None, None, project_dir, [repo]), None)
+
+        info = {"name": u"#Standard", "placeholderName": u"Standard", "namespace": u"Standard",
+                "title": u"Standard", "effectiveResolution": u"Standard, 3.5.18.0 (System)"}
+        aliases = api._library_aliases(info)
+        check("alias by hash name", u"standard" in aliases and u"#standard" in aliases, True)
+        check("alias by resolution", u"standard, 3.5.18.0 (system)" in aliases, True)
+    finally:
+        shutil.rmtree(root)
+
+
 def main():
     for test in (test_gvl, test_struct, test_enum, test_alias, test_pou_kind, test_round_trips,
-                 test_name_filter, test_search, test_interval):
+                 test_name_filter, test_search, test_interval, test_libraries):
         test()
 
     print("")

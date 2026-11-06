@@ -326,40 +326,47 @@ app.MapPost("/session/stop", async (string? project, CancellationToken ct) =>
     .WithSummary("Close a project (default: the default project) and stop its CODESYS instance, releasing the project file.");
 
 // 1. Project structure -------------------------------------------------------
-app.MapGet("/structure", (string? project, CancellationToken ct) =>
-        RunAsync(ct2 => ops.GetStructureAsync(project, ct2), ct))
+app.MapGet("/structure", (string? project, string? library, CancellationToken ct) =>
+        RunAsync(ct2 => ops.GetStructureAsync(project, library, ct2), ct))
     .WithName("GetStructure")
     .WithTags("Structure")
-    .WithSummary("Full project structure: POUs, GVLs, DUTs and ENUMs.");
+    .WithSummary("Full project structure: POUs, GVLs, DUTs and ENUMs (of a referenced library with ?library=).");
+
+app.MapGet("/libraries", (string? project, string? name, CancellationToken ct) =>
+        RunAsync(ct2 => ops.ListLibrariesAsync(project, name, ct2), ct))
+    .WithName("GetLibraries")
+    .WithTags("Structure")
+    .WithSummary("Library references of the project, each with the file it can be read from; ?name= returns one.");
 
 // 2. Read object contents ----------------------------------------------------
-app.MapGet("/pou/content", (string name, string? project, CancellationToken ct) =>
-        RunAsync(ct2 => ops.GetPouContentAsync(name, project, ct2), ct))
+// Every read route takes an optional ?library= to read from a referenced library instead.
+app.MapGet("/pou/content", (string name, string? project, string? library, CancellationToken ct) =>
+        RunAsync(ct2 => ops.GetPouContentAsync(name, project, library, ct2), ct))
     .WithName("GetPouContent")
     .WithTags("Read")
     .WithSummary("Full ST source (declaration + implementation) of a POU.");
 
-app.MapGet("/gvl/content", (string name, string? filter, string? project, CancellationToken ct) =>
-        RunAsync(ct2 => ops.GetGvlContentAsync(name, filter, project, ct2), ct))
+app.MapGet("/gvl/content", (string name, string? filter, string? project, string? library, CancellationToken ct) =>
+        RunAsync(ct2 => ops.GetGvlContentAsync(name, filter, project, library, ct2), ct))
     .WithName("GetGvlContent")
     .WithTags("Read")
     .WithSummary("Variables of a global variable list, with types and initial values; optional name filter.");
 
-app.MapGet("/dut/content", (string name, string? project, CancellationToken ct) =>
-        RunAsync(ct2 => ops.GetDutContentAsync(name, project, ct2), ct))
+app.MapGet("/dut/content", (string name, string? project, string? library, CancellationToken ct) =>
+        RunAsync(ct2 => ops.GetDutContentAsync(name, project, library, ct2), ct))
     .WithName("GetDutContent")
     .WithTags("Read")
     .WithSummary("Fields of a structure/union DUT.");
 
-app.MapGet("/enum/content", (string name, string? project, CancellationToken ct) =>
-        RunAsync(ct2 => ops.GetEnumContentAsync(name, project, ct2), ct))
+app.MapGet("/enum/content", (string name, string? project, string? library, CancellationToken ct) =>
+        RunAsync(ct2 => ops.GetEnumContentAsync(name, project, library, ct2), ct))
     .WithName("GetEnumContent")
     .WithTags("Read")
     .WithSummary("Values of an ENUM DUT.");
 
-app.MapGet("/search", (string pattern, bool? regex, bool? caseSensitive, bool? ignoreComments, int? maxResults, string? project, CancellationToken ct) =>
+app.MapGet("/search", (string pattern, bool? regex, bool? caseSensitive, bool? ignoreComments, int? maxResults, string? project, string? library, CancellationToken ct) =>
         RunAsync(ct2 => ops.SearchTextAsync(
-            pattern, regex ?? false, caseSensitive ?? false, ignoreComments ?? false, maxResults, project, ct2), ct))
+            pattern, regex ?? false, caseSensitive ?? false, ignoreComments ?? false, maxResults, project, library, ct2), ct))
     .WithName("SearchText")
     .WithTags("Read")
     .WithSummary("Search declarations and implementations of all POUs, members, GVLs, DUTs and ENUMs.");
