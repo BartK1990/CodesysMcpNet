@@ -1022,6 +1022,13 @@ def _collect_messages():
     if system is None:
         return [], False
 
+    # Compiler output lives in its own message category ("Build"). The category-less
+    # accessors only return the default (script output) category, i.e. our own
+    # "[mcp]" log lines, so read every category explicitly when the engine allows it.
+    by_category = _collect_messages_by_category(system)
+    if by_category is not None:
+        return by_category, True
+
     store = None
     for name in ("message_store", "messagestore", "messages"):
         store = getattr(system, name, None)
@@ -1065,6 +1072,84 @@ def _collect_messages():
         return messages, len(messages) > 0
 
     return messages, True
+
+
+def _collect_messages_by_category(system):
+    """
+    Messages of every category, read with get_message_objects(category) (or
+    get_messages(category) on engines without message objects). Returns None when the
+    engine cannot enumerate categories, so the caller falls back to the older accessors.
+    Our own "[mcp]" progress lines are dropped: they are not compiler output.
+    """
+    lister = getattr(system, "get_message_categories", None)
+    if not callable(lister):
+        return None
+
+    try:
+        categories = list(lister())
+    except Exception:
+        try:
+            categories = list(lister(False))
+        except Exception:
+            return None
+
+    readers = [getattr(system, name, None) for name in ("get_message_objects", "get_messages")]
+    readers = [reader for reader in readers if callable(reader)]
+    if not readers:
+        return None
+
+    messages = []
+    read_any = False
+    for category in categories:
+        items = None
+        for reader in readers:
+            try:
+                items = list(reader(category))
+                break
+            except Exception:
+                items = None
+        if items is None:
+            continue
+
+        read_any = True
+        for item in items:
+            text = _squash(str(getattr(item, "text", item)))
+            if text.startswith("[mcp]"):
+                continue
+            code = _message_code(item)
+            messages.append({
+                "severity": _severity(item),
+                "text": (code + ": " + text) if code else text,
+                "object": _message_object_name(item),
+                "position": _optional_str(item, "position", "line"),
+            })
+
+    return messages if read_any else None
+
+
+def _message_object_name(item):
+    """Name of the object a message points at (message objects carry a ScriptObject)."""
+    value = getattr(item, "object", None)
+    if value is not None and not isinstance(value, (str, type(u""))):
+        try:
+            name = object_name(value)
+            if name:
+                return _squash(name)
+        except Exception:
+            pass
+    return _optional_str(item, "object_name", "objectname", "object")
+
+
+def _message_code(item):
+    """Compiler message code such as "C0035", from the message's prefix and number."""
+    prefix = getattr(item, "prefix", None)
+    number = getattr(item, "number", None)
+    if not prefix or number is None:
+        return None
+    try:
+        return "%s%04d" % (prefix, int(number))
+    except Exception:
+        return None
 
 
 def _severity(item):
