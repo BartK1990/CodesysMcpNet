@@ -2389,13 +2389,15 @@ _LANGUAGE_ALIASES = {
     "CFC": "CFC", "CONTINUOUSFUNCTIONCHART": "CFC",
 }
 
+# The scripting engine exposes ImplementationLanguages.st / instruction_list / ladder /
+# fbd / sfc / cfc (Guid values); the longer spellings are kept for other versions.
 _LANGUAGE_MEMBERS = {
-    "ST": ("structured_text", "StructuredText", "ST"),
-    "IL": ("instruction_list", "InstructionList", "IL"),
-    "LD": ("ladder_diagram", "ladder_logic_diagram", "LadderDiagram", "LD"),
-    "FBD": ("function_block_diagram", "FunctionBlockDiagram", "FBD"),
-    "SFC": ("sequential_function_chart", "SequentialFunctionChart", "SFC"),
-    "CFC": ("continuous_function_chart", "ContinuousFunctionChart", "CFC"),
+    "ST": ("st", "structured_text", "StructuredText", "ST"),
+    "IL": ("instruction_list", "il", "InstructionList", "IL"),
+    "LD": ("ladder", "ld", "ladder_diagram", "ladder_logic_diagram", "LadderDiagram", "LD"),
+    "FBD": ("fbd", "function_block_diagram", "FunctionBlockDiagram", "FBD"),
+    "SFC": ("sfc", "sequential_function_chart", "SequentialFunctionChart", "SFC"),
+    "CFC": ("cfc", "continuous_function_chart", "ContinuousFunctionChart", "CFC"),
 }
 
 _DUT_TYPE_MEMBERS = {
@@ -2433,14 +2435,31 @@ def _pou_type(value):
 
 
 def _language(value):
+    """
+    The ImplementationLanguages Guid for a language name. create_pou only accepts that
+    Guid (or None), never the name itself, so this returns None for ST when the
+    enumeration cannot be resolved (CODESYS then defaults to ST) and raises otherwise.
+    """
     normalized = _normalize_language(value)
     enumeration = resolve("ImplementationLanguages", required=False)
-    if enumeration is None:
-        return normalized
-    try:
-        return _member(enumeration, _LANGUAGE_MEMBERS[normalized], "ImplementationLanguages")
-    except Exception:
-        return normalized
+    if enumeration is not None:
+        candidates = _LANGUAGE_MEMBERS[normalized]
+        for candidate in candidates:
+            member = getattr(enumeration, candidate, None)
+            if member is not None:
+                return member
+        # Last resort: case-insensitive match against what the enumeration offers.
+        wanted = set(c.lower() for c in candidates)
+        for attribute in dir(enumeration):
+            if attribute.lower() in wanted:
+                member = getattr(enumeration, attribute, None)
+                if member is not None:
+                    return member
+    if normalized == "ST":
+        return None
+    raise RuntimeError(
+        "Language " + normalized + " cannot be selected in this CODESYS version "
+        "(no matching ImplementationLanguages member).")
 
 
 def _dut_type(kind):
