@@ -1392,12 +1392,13 @@ def _collect_messages():
     messages = []
     try:
         for item in raw:
-            messages.append({
+            message = {
                 "severity": _severity(item),
                 "text": _squash(str(getattr(item, "text", item))),
                 "object": _optional_str(item, "object_name", "objectname", "object"),
-                "position": _optional_str(item, "position", "line"),
-            })
+            }
+            message.update(_message_location(item))
+            messages.append(message)
     except Exception:
         return messages, len(messages) > 0
 
@@ -1447,14 +1448,59 @@ def _collect_messages_by_category(system):
             if text.startswith("[mcp]"):
                 continue
             code = _message_code(item)
-            messages.append({
+            message = {
                 "severity": _severity(item),
                 "text": (code + ": " + text) if code else text,
                 "object": _message_object_name(item),
-                "position": _optional_str(item, "position", "line"),
-            })
+            }
+            message.update(_message_location(item))
+            messages.append(message)
 
     return messages if read_any else None
+
+
+# "Line 2, Column 1 (Impl)" or "Line 8 (Decl)" - how a message object describes its position.
+_POSITION_TEXT_RE = re.compile(r"Line\s+(\d+)(?:\s*,\s*Column\s+(\d+))?(?:\s*\((\w+)\))?", re.IGNORECASE)
+
+
+def parse_message_position(position_text, position_offset=None):
+    """
+    Line, column and section from a message's position_text ("Line 2, Column 1 (Impl)", or
+    "Line 8 (Decl)" without a column). CODESYS reports the column where the statement starts
+    (1 when it gives none) and the character offset from there in position_offset, so the
+    column of the flagged token is the sum. Line and column are 1-based; section is
+    "implementation", "declaration" or null.
+    """
+    match = _POSITION_TEXT_RE.search(position_text or u"")
+    if match is None:
+        return None
+    column = int(match.group(2) or 1) + (_try_int(position_offset) or 0)
+    part = (match.group(3) or u"").lower()
+    section = None
+    if part.startswith("impl"):
+        section = u"implementation"
+    elif part.startswith("decl"):
+        section = u"declaration"
+    return {"line": int(match.group(1)), "column": column, "section": section}
+
+
+def _message_location(item):
+    """
+    Where a message points: line, column, section and length when the engine provides
+    a position text, plus the raw (engine-internal) position. Missing parts are null.
+    """
+    location = {
+        "line": None,
+        "column": None,
+        "section": None,
+        "length": _try_int(_optional_str(item, "length")),
+        "position": _optional_str(item, "position", "line"),
+    }
+    parsed = parse_message_position(
+        _optional_str(item, "position_text"), _optional_str(item, "position_offset"))
+    if parsed is not None:
+        location.update(parsed)
+    return location
 
 
 def _message_object_name(item):
@@ -1711,10 +1757,67 @@ class Project(object):
             current = found
         return current
 
+    # -- kind / library information -------------------------------------
+    @property
+    def IsLibrary(self):
+        """True when the open file is a source library (.library) rather than a .project."""
+        return is_library_path(self.Path)
+
+    @property
+    def Kind(self):
+        return u"library" if self.IsLibrary else u"project"
+
+    def LibraryInfo(self):
+        """
+        Title, version, company, namespace, ... from the library's Project Information, or None
+        for a .project. Every field is read defensively: which ones exist depends on the engine
+        version, and a missing one is reported as null.
+        """
+        if not self.IsLibrary:
+            return None
+
+        info = None
+        for getter in ("get_project_info", "project_info"):
+            candidate = getattr(self.Object, getter, None)
+            try:
+                info = candidate() if callable(candidate) else candidate
+            except Exception as ex:
+                log("Could not read the library's project information: " + mcp_io._describe(ex))
+                info = None
+            if info is not None:
+                break
+
+        def read(*names):
+            if info is None:
+                return None
+            for name in names:
+                try:
+                    value = getattr(info, name, None)
+                except Exception:
+                    value = None
+                if value is not None and not callable(value):
+                    text = _text_or_none(value)
+                    if text:
+                        return text
+            return None
+
+        return {
+            "title": read("title"),
+            "version": read("version"),
+            "company": read("company"),
+            "defaultNamespace": read("default_namespace", "defaultnamespace"),
+            "author": read("author"),
+            "description": read("description"),
+            "category": read("library_category", "library_categories"),
+            "placeholder": read("placeholder"),
+        }
+
     # -- structure -------------------------------------------------------
     def Structure(self):
         return {
             "projectPath": self.Path,
+            "kind": self.Kind,
+            "libraryInfo": self.LibraryInfo(),
             "pous": [p.Summary() for p in self.Pous],
             "gvls": [g.Summary() for g in self.GVLs],
             "duts": [d.Summary() for d in self.DUTs],
@@ -2020,6 +2123,11 @@ _RESOLUTION_RE = re.compile(r"^\s*(?P<title>.+?)\s*,\s*(?P<version>[^\s(]+)\s*\(
 
 SOURCE_LIBRARY_EXTENSIONS = (".library",)
 COMPILED_LIBRARY_EXTENSIONS = (".compiled-library", ".compiled-library-v3")
+
+
+def is_library_path(path):
+    """True for a source library file (.library); compiled libraries do not count."""
+    return (path or u"").strip().lower().endswith(SOURCE_LIBRARY_EXTENSIONS)
 DEFAULT_LIBRARY_REPOSITORY = r"C:\ProgramData\CODESYS\Managed Libraries"
 
 

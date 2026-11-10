@@ -35,6 +35,7 @@ export default defineConfig({
             'guides/rest-api',
             'guides/persistent-session',
             'guides/multiple-projects',
+            'guides/libraries',
             'guides/windows-service',
           ],
         },

@@ -216,6 +216,10 @@ def test_libraries():
     check("resolution title with comma",
           api.parse_library_resolution(u"Util, Extra, 1.0 (ACME)")["title"], u"Util, Extra")
     check("not a resolution", api.parse_library_resolution(u"#Standard"), None)
+    check("library file", api.is_library_path(u"C:/Libs/EasyModbusLib 1.0.11.LIBRARY"), True)
+    check("project file is no library", api.is_library_path(u"C:/Plc.project"), False)
+    check("compiled library is no source", api.is_library_path(u"Lib.compiled-library-v3"), False)
+    check("no path", api.is_library_path(None), False)
 
     root = tempfile.mkdtemp()
     try:
@@ -274,9 +278,24 @@ def test_recipes():
     check("non-numeric limit", api.recipe_limit_warning(u"G.t", u"5", u"T#1s", u"T#2s"), None)
 
 
+def test_message_position():
+    print("Compiler message positions")
+    check("implementation", api.parse_message_position(u"Line 2, Column 1 (Impl)", u"2"),
+          {"line": 2, "column": 3, "section": u"implementation"})
+    check("declaration", api.parse_message_position(u"Line 7, Column 5 (Decl)", u"0"),
+          {"line": 7, "column": 5, "section": u"declaration"})
+    check("declaration without column", api.parse_message_position(u"Line 8 (Decl)", u"1"),
+          {"line": 8, "column": 2, "section": u"declaration"})
+    check("no section, no offset", api.parse_message_position(u"Line 12, Column 4", None),
+          {"line": 12, "column": 4, "section": None})
+    check("unparseable", api.parse_message_position(u"Object 'FB_X'", u"0"), None)
+    check("missing", api.parse_message_position(None), None)
+
+
 def main():
     for test in (test_gvl, test_struct, test_enum, test_alias, test_pou_kind, test_round_trips,
-                 test_name_filter, test_search, test_interval, test_libraries, test_recipes):
+                 test_name_filter, test_search, test_interval, test_libraries, test_recipes,
+                 test_message_position):
         test()
 
     print("")

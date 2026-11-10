@@ -11,7 +11,7 @@ nothing else. If you work with several projects at once, raise **Max projects**.
 
 1. On the settings page, set **Max projects** to how many projects you want available
    (1–10). The project field becomes the **default project**.
-2. Under **Additional projects**, click **Add project** and pick each further `.project` file.
+2. Under **Additional projects**, click **Add project** and pick each further `.project` (or source `.library`) file.
 3. Click **Save**. Like every setting, it takes effect immediately.
 
 ![Settings page with Max projects set to 3 and two additional projects](../../../assets/screenshots/settings-page-multi.png)
@@ -36,7 +36,7 @@ With `MaxProjects` at 1, `AdditionalProjectPaths` is ignored.
 Every MCP tool and REST endpoint takes an optional `project` argument:
 
 - omitted → the default project;
-- a **name** — the file name without `.project` (`Line2`), case-insensitive;
+- a **name** — the file name, with or without `.project` / `.library` (`Line2`), case-insensitive;
 - or the **full path** — needed only when two configured projects share a file name.
 
 Only configured projects can be selected: a caller can never point the server at any other

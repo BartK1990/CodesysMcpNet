@@ -308,11 +308,11 @@
     </div>
 
     <div class="field">
-      <label for="projectPath" id="projectPath-label">Project (.project) file path</label>
+      <label for="projectPath" id="projectPath-label">Project (.project or .library) file path</label>
       <div class="field-row">
         <input type="text" id="projectPath" name="projectPath"
                placeholder="C:\demo\Plc.project" autocomplete="off">
-        <button type="button" class="btn-secondary browse-btn" data-target="projectPath" data-filter=".project">Browse…</button>
+        <button type="button" class="btn-secondary browse-btn" data-target="projectPath" data-filter=".project,.library">Browse…</button>
       </div>
       <div class="status" id="projectPath-status">&nbsp;</div>
     </div>
@@ -431,7 +431,7 @@
     const browse = Object.assign(document.createElement('button'), {
       type: 'button', className: 'btn-secondary', textContent: 'Browse…',
     });
-    browse.addEventListener('click', () => openBrowser(input, status, '.project', 'Select project file'));
+    browse.addEventListener('click', () => openBrowser(input, status, '.project,.library', 'Select project or library file'));
 
     const remove = Object.assign(document.createElement('button'), {
       type: 'button', className: 'btn-secondary', textContent: 'Remove',
@@ -455,7 +455,7 @@
     const max = maxProjects();
     const multi = max > 1;
     additionalField.hidden = !multi && additionalRows.length === 0;
-    projectLabel.textContent = multi ? 'Default project (.project) file path' : 'Project (.project) file path';
+    projectLabel.textContent = multi ? 'Default project (.project or .library) file path' : 'Project (.project or .library) file path';
     addProjectButton.disabled = additionalRows.length >= max - 1;
 
     if (additionalRows.length > max - 1) {
@@ -1163,7 +1163,7 @@
 
   document.querySelectorAll('.browse-btn').forEach((btn) => {
     const target = btn.dataset.target;
-    const title = target === 'executablePath' ? 'Select CODESYS.exe' : 'Select project file';
+    const title = target === 'executablePath' ? 'Select CODESYS.exe' : 'Select project or library file';
     btn.addEventListener('click', () => openBrowser(fields[target], statuses[target], btn.dataset.filter, title));
   });
 
