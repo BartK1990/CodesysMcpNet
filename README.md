@@ -438,6 +438,12 @@ engine versions, and some do not expose a message store to scripts at all.
 `messagesAvailable` so you can tell whether `messages` is authoritative. The `success`
 flag is always meaningful: it also reflects whether the build call itself threw.
 
+Each message carries `severity`, `text` (with its code, e.g. `C0046: ...`), `object` (the POU
+it points at), and where in it: `section` (`implementation` or `declaration`), 1-based `line`
+and `column` within that section, and `length` of the flagged token. They are parsed from the
+message's position text; when the engine gives none, they are null. `position` is CODESYS's
+raw, engine-internal position value, not a line number.
+
 ## Verifying without CODESYS
 
 The ST parser and declaration generators run standalone:

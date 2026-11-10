@@ -48,4 +48,4 @@ Python traceback).
 
 | Tool | Inputs | Effect |
 |---|---|---|
-| `compile` | `clean?`, `saveAfterCompile?` | Generates code for every application and returns the verdict. A configured library has no application, so its objects are checked instead. `messagesAvailable` tells whether the compiler message list could be read on this CODESYS version; `success` is always meaningful. |
+| `compile` | `clean?`, `saveAfterCompile?` | Generates code for every application and returns the verdict. A configured library has no application, so its objects are checked instead. Each message has `severity`, `text` (with its code, e.g. `C0046`), `object`, and `section` (`implementation`/`declaration`), 1-based `line` and `column` within that section, and the `length` of the flagged token. A build with only warnings still has `success: true`. `messagesAvailable` tells whether the compiler message list could be read on this CODESYS version; `success` is always meaningful. |

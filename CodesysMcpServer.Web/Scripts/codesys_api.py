@@ -1392,12 +1392,13 @@ def _collect_messages():
     messages = []
     try:
         for item in raw:
-            messages.append({
+            message = {
                 "severity": _severity(item),
                 "text": _squash(str(getattr(item, "text", item))),
                 "object": _optional_str(item, "object_name", "objectname", "object"),
-                "position": _optional_str(item, "position", "line"),
-            })
+            }
+            message.update(_message_location(item))
+            messages.append(message)
     except Exception:
         return messages, len(messages) > 0
 
@@ -1447,14 +1448,59 @@ def _collect_messages_by_category(system):
             if text.startswith("[mcp]"):
                 continue
             code = _message_code(item)
-            messages.append({
+            message = {
                 "severity": _severity(item),
                 "text": (code + ": " + text) if code else text,
                 "object": _message_object_name(item),
-                "position": _optional_str(item, "position", "line"),
-            })
+            }
+            message.update(_message_location(item))
+            messages.append(message)
 
     return messages if read_any else None
+
+
+# "Line 2, Column 1 (Impl)" or "Line 8 (Decl)" - how a message object describes its position.
+_POSITION_TEXT_RE = re.compile(r"Line\s+(\d+)(?:\s*,\s*Column\s+(\d+))?(?:\s*\((\w+)\))?", re.IGNORECASE)
+
+
+def parse_message_position(position_text, position_offset=None):
+    """
+    Line, column and section from a message's position_text ("Line 2, Column 1 (Impl)", or
+    "Line 8 (Decl)" without a column). CODESYS reports the column where the statement starts
+    (1 when it gives none) and the character offset from there in position_offset, so the
+    column of the flagged token is the sum. Line and column are 1-based; section is
+    "implementation", "declaration" or null.
+    """
+    match = _POSITION_TEXT_RE.search(position_text or u"")
+    if match is None:
+        return None
+    column = int(match.group(2) or 1) + (_try_int(position_offset) or 0)
+    part = (match.group(3) or u"").lower()
+    section = None
+    if part.startswith("impl"):
+        section = u"implementation"
+    elif part.startswith("decl"):
+        section = u"declaration"
+    return {"line": int(match.group(1)), "column": column, "section": section}
+
+
+def _message_location(item):
+    """
+    Where a message points: line, column, section and length when the engine provides
+    a position text, plus the raw (engine-internal) position. Missing parts are null.
+    """
+    location = {
+        "line": None,
+        "column": None,
+        "section": None,
+        "length": _try_int(_optional_str(item, "length")),
+        "position": _optional_str(item, "position", "line"),
+    }
+    parsed = parse_message_position(
+        _optional_str(item, "position_text"), _optional_str(item, "position_offset"))
+    if parsed is not None:
+        location.update(parsed)
+    return location
 
 
 def _message_object_name(item):

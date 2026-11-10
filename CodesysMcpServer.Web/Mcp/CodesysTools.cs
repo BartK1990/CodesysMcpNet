@@ -172,7 +172,7 @@ public sealed class CodesysTools
         Run(() => _ops.CreateEnumAsync(request, project, ct));
 
     [McpServerTool(Name = "compile")]
-    [Description("Generate code for every application in the project and return the compiler verdict. A library (kind library) has no application, so its objects are checked instead (Build > Check all pool objects).")]
+    [Description("Generate code for every application in the project and return the compiler verdict. A library (kind library) has no application, so its objects are checked instead (Build > Check all pool objects). Each message has severity, text (with its code), object (the POU), and section (implementation or declaration) with a 1-based line and column within that section and the length of the flagged token.")]
     public Task<JsonElement> CompileAsync(
         CompileRequest request,
         [Description(ProjectDescription)] string? project = null,
