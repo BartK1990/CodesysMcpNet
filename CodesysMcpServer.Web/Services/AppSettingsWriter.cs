@@ -58,6 +58,7 @@ public sealed class AppSettingsWriter
         if (!File.Exists(executablePath))
             throw new CodesysValidationException($"CODESYS executable not found: {executablePath}");
 
+        ProjectCatalog.ValidateExtension(projectPath);
         if (!File.Exists(projectPath))
             throw new CodesysValidationException($"Project file not found: {projectPath}");
 
@@ -67,6 +68,9 @@ public sealed class AppSettingsWriter
                 ? "Max projects is 1, so no additional projects can be configured. Remove them or raise Max projects."
                 : $"Max projects is {maxProjects}, so at most {maxProjects - 1} additional project(s) can be configured; got {additional.Count}.");
         }
+
+        foreach (var path in additional)
+            ProjectCatalog.ValidateExtension(path);
 
         var missing = additional.FirstOrDefault(p => !File.Exists(p));
         if (missing is not null)

@@ -17,11 +17,14 @@ try them out:
 Every operation below, and the `/session` routes, take an optional `project` query parameter
 (a configured project's name or full path, e.g. `?project=Line2`) — see
 [Multiple projects](/CodesysMcpNet/guides/multiple-projects/). Without it they act on the
-default project.
+default project. The read routes (`/structure`, `/pou/content`, `/gvl/content`, `/dut/content`,
+`/enum/content`, `/search`) also take `library`, which reads a library the project references —
+see [Libraries](/CodesysMcpNet/guides/libraries/).
 
 | Method | Route | Body / query |
 |---|---|---|
-| GET  | `/structure`     | – |
+| GET  | `/structure`     | `library?` |
+| GET  | `/libraries`     | `name?` — library references, each with the file it can be read from |
 | GET  | `/pou/content`   | `name` — a POU, or `Parent.Member` for a method/action/property/transition |
 | GET  | `/gvl/content`   | `name`, `filter?` (`*Fault*` wildcard or substring) |
 | GET  | `/dut/content`   | `name` |
@@ -36,7 +39,7 @@ default project.
 | POST | `/dut/create`    | `{ name, fields: [{name,type,initialValue?,comment?}], baseType?, parentPath? }` |
 | POST | `/enum/create`   | `{ name, values: ["Idle := 3","Busy"], baseType?, parentPath? }` |
 | POST | `/compile`       | `{ clean?, saveAfterCompile? }` |
-| GET  | `/projects`      | – configured projects with their session state |
+| GET  | `/projects`      | – configured projects with their `kind` (`project` / `library`) and session state |
 | GET  | `/sessions`      | – session status of every configured project |
 | POST | `/projects/password` | `{ project?, password }` — password of a password-protected project, kept in memory only (empty forgets it) |
 | GET  | `/session`       | – persistent CODESYS status |

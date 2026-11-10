@@ -4,6 +4,7 @@ using CodesysMcpServer.Web.Models;
 namespace CodesysMcpServer.Web.Services;
 
 /// <summary>A configured project plus the state of its CODESYS session (<c>GET /projects</c>, <c>projects</c> tool).</summary>
+/// <param name="Kind"><c>project</c> for a .project file, <c>library</c> for a source .library opened as the project.</param>
 /// <param name="Session">Session state, as in <see cref="CodesysSessionStatus.State"/>.</param>
 /// <param name="PasswordNeeded">
 /// <c>password_required</c> / <c>password_invalid</c> when the project could not be opened for
@@ -11,7 +12,7 @@ namespace CodesysMcpServer.Web.Services;
 /// </param>
 /// <param name="HasPassword">Whether a password was entered for this project (it is never returned).</param>
 public sealed record ProjectSummary(
-    string Name, string Path, bool IsDefault, bool Exists, string Session, string? PasswordNeeded, bool HasPassword);
+    string Name, string Path, string Kind, bool IsDefault, bool Exists, string Session, string? PasswordNeeded, bool HasPassword);
 
 /// <summary>
 /// The one place that knows how to turn a request into a CODESYS script run. Both the REST
@@ -44,7 +45,7 @@ public sealed class CodesysOperations
     public IReadOnlyList<ProjectSummary> ListProjects() =>
         _projects.List()
             .Select(p => new ProjectSummary(
-                p.Name, p.Path, p.IsDefault, p.Exists, _sessions.GetStatus(p).State,
+                p.Name, p.Path, p.Kind, p.IsDefault, p.Exists, _sessions.GetStatus(p).State,
                 _passwords.Needed(p.Path), _passwords.Has(p.Path)))
             .ToList();
 

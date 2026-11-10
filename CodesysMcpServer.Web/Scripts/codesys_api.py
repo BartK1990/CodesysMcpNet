@@ -1711,10 +1711,67 @@ class Project(object):
             current = found
         return current
 
+    # -- kind / library information -------------------------------------
+    @property
+    def IsLibrary(self):
+        """True when the open file is a source library (.library) rather than a .project."""
+        return is_library_path(self.Path)
+
+    @property
+    def Kind(self):
+        return u"library" if self.IsLibrary else u"project"
+
+    def LibraryInfo(self):
+        """
+        Title, version, company, namespace, ... from the library's Project Information, or None
+        for a .project. Every field is read defensively: which ones exist depends on the engine
+        version, and a missing one is reported as null.
+        """
+        if not self.IsLibrary:
+            return None
+
+        info = None
+        for getter in ("get_project_info", "project_info"):
+            candidate = getattr(self.Object, getter, None)
+            try:
+                info = candidate() if callable(candidate) else candidate
+            except Exception as ex:
+                log("Could not read the library's project information: " + mcp_io._describe(ex))
+                info = None
+            if info is not None:
+                break
+
+        def read(*names):
+            if info is None:
+                return None
+            for name in names:
+                try:
+                    value = getattr(info, name, None)
+                except Exception:
+                    value = None
+                if value is not None and not callable(value):
+                    text = _text_or_none(value)
+                    if text:
+                        return text
+            return None
+
+        return {
+            "title": read("title"),
+            "version": read("version"),
+            "company": read("company"),
+            "defaultNamespace": read("default_namespace", "defaultnamespace"),
+            "author": read("author"),
+            "description": read("description"),
+            "category": read("library_category", "library_categories"),
+            "placeholder": read("placeholder"),
+        }
+
     # -- structure -------------------------------------------------------
     def Structure(self):
         return {
             "projectPath": self.Path,
+            "kind": self.Kind,
+            "libraryInfo": self.LibraryInfo(),
             "pous": [p.Summary() for p in self.Pous],
             "gvls": [g.Summary() for g in self.GVLs],
             "duts": [d.Summary() for d in self.DUTs],
@@ -2020,6 +2077,11 @@ _RESOLUTION_RE = re.compile(r"^\s*(?P<title>.+?)\s*,\s*(?P<version>[^\s(]+)\s*\(
 
 SOURCE_LIBRARY_EXTENSIONS = (".library",)
 COMPILED_LIBRARY_EXTENSIONS = (".compiled-library", ".compiled-library-v3")
+
+
+def is_library_path(path):
+    """True for a source library file (.library); compiled libraries do not count."""
+    return (path or u"").strip().lower().endswith(SOURCE_LIBRARY_EXTENSIONS)
 DEFAULT_LIBRARY_REPOSITORY = r"C:\ProgramData\CODESYS\Managed Libraries"
 
 

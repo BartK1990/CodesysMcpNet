@@ -16,6 +16,11 @@ public sealed class FileBrowserService
         if (!Directory.Exists(path))
             throw new CodesysValidationException($"Directory not found: {path}");
 
+        // One extension (".exe") or several, comma-separated (".project,.library").
+        var extensions = string.IsNullOrWhiteSpace(extensionFilter)
+            ? null
+            : extensionFilter.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
         var entries = new List<FileBrowserEntry>();
 
         try
@@ -25,8 +30,8 @@ public sealed class FileBrowserService
 
             foreach (var file in Directory.EnumerateFiles(path))
             {
-                if (extensionFilter is not null &&
-                    !file.EndsWith(extensionFilter, StringComparison.OrdinalIgnoreCase))
+                if (extensions is not null &&
+                    !extensions.Any(e => file.EndsWith(e, StringComparison.OrdinalIgnoreCase)))
                     continue;
 
                 entries.Add(new FileBrowserEntry(System.IO.Path.GetFileName(file), file, IsDirectory: false));

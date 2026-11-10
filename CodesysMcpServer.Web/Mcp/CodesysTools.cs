@@ -18,8 +18,9 @@ namespace CodesysMcpServer.Web.Mcp;
 public sealed class CodesysTools
 {
     private const string ProjectDescription =
-        "Optional: which configured project to act on, by name (file name without .project) or full path. " +
-        "Omit for the default project. The projects tool lists the configured ones.";
+        "Optional: which configured project to act on, by name (file name without .project/.library) or full path. " +
+        "Omit for the default project. The projects tool lists the configured ones; a configured .library " +
+        "(kind library) is edited like a project.";
 
     private const string LibraryDescription =
         "Optional: read from a library the project references instead of the project itself - its title, " +
@@ -34,7 +35,7 @@ public sealed class CodesysTools
     }
 
     [McpServerTool(Name = "projects")]
-    [Description("Projects this server is configured for: name, path, whether it is the default one (used when a tool's project argument is omitted), whether the file exists, the state of its CODESYS session, and passwordNeeded when the project is password protected and its password has to be entered on the settings page. Pass a name from this list as the project argument of the other tools.")]
+    [Description("Projects this server is configured for: name, path, whether it is the default one (used when a tool's project argument is omitted), kind (project for a .project file, library for a source .library opened and edited like a project), whether the file exists, the state of its CODESYS session, and passwordNeeded when the project is password protected and its password has to be entered on the settings page. Pass a name from this list as the project argument of the other tools.")]
     public IReadOnlyList<ProjectSummary> Projects() => _ops.ListProjects();
 
     [McpServerTool(Name = "libraries")]
@@ -45,7 +46,7 @@ public sealed class CodesysTools
         Run(() => _ops.ListLibrariesAsync(project, name: null, ct));
 
     [McpServerTool(Name = "structure")]
-    [Description("Full project structure: POUs, GVLs, DUTs and ENUMs - or, with library, those of a referenced library. Acts on the default project unless project names another configured one.")]
+    [Description("Full project structure: POUs, GVLs, DUTs and ENUMs - or, with library, those of a referenced library. kind is project or library; for a configured .library, libraryInfo carries its title, version, company and default namespace. Acts on the default project unless project names another configured one.")]
     public Task<JsonElement> StructureAsync(
         [Description(ProjectDescription)] string? project = null,
         [Description(LibraryDescription)] string? library = null,
@@ -171,7 +172,7 @@ public sealed class CodesysTools
         Run(() => _ops.CreateEnumAsync(request, project, ct));
 
     [McpServerTool(Name = "compile")]
-    [Description("Generate code for every application in the project and return the compiler verdict.")]
+    [Description("Generate code for every application in the project and return the compiler verdict. A library (kind library) has no application, so its objects are checked instead (Build > Check all pool objects).")]
     public Task<JsonElement> CompileAsync(
         CompileRequest request,
         [Description(ProjectDescription)] string? project = null,

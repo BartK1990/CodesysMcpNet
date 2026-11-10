@@ -216,6 +216,10 @@ def test_libraries():
     check("resolution title with comma",
           api.parse_library_resolution(u"Util, Extra, 1.0 (ACME)")["title"], u"Util, Extra")
     check("not a resolution", api.parse_library_resolution(u"#Standard"), None)
+    check("library file", api.is_library_path(u"C:/Libs/EasyModbusLib 1.0.11.LIBRARY"), True)
+    check("project file is no library", api.is_library_path(u"C:/Plc.project"), False)
+    check("compiled library is no source", api.is_library_path(u"Lib.compiled-library-v3"), False)
+    check("no path", api.is_library_path(None), False)
 
     root = tempfile.mkdtemp()
     try:

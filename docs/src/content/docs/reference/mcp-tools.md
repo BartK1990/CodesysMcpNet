@@ -7,7 +7,9 @@ All tools act on the project configured on the
 [settings page](/CodesysMcpNet/guides/settings-page/). Every tool except `projects` also takes
 an optional `project` argument (a configured project's name or full path) to pick one of
 several projects — see [Multiple projects](/CodesysMcpNet/guides/multiple-projects/); omit it
-for the default project. A failed validation or script run is
+for the default project. The read tools also take an optional `library` argument that reads a
+library the project references instead — see [Libraries](/CodesysMcpNet/guides/libraries/).
+A failed validation or script run is
 returned to the client as a tool error whose message carries the details (including the
 Python traceback).
 
@@ -15,18 +17,19 @@ Python traceback).
 
 | Tool | Inputs | Returns |
 |---|---|---|
-| `projects` | – | Configured projects: `name`, `path`, `isDefault`, `exists`, the state of its CODESYS `session`, and `passwordNeeded` when the project's password has to be entered on the settings page. |
+| `projects` | – | Configured projects: `name`, `path`, `kind` (`project`, or `library` for a configured `.library` file — see [Libraries](/CodesysMcpNet/guides/libraries/)), `isDefault`, `exists`, the state of its CODESYS `session`, and `passwordNeeded` when the project's password has to be entered on the settings page. |
 
 ## Read
 
 | Tool | Inputs | Returns |
 |---|---|---|
-| `structure` | – | Full project structure: applications, folders, POUs, GVLs, DUTs and ENUMs. |
-| `pou_content` | `name` | Declaration and implementation of a POU. Use `Parent.Member` for a method, action, property or transition (e.g. `FB_Motor.Reset`) and `Parent.Property.Get` for a property accessor. |
-| `gvl_content` | `name`, `filter?` | Variables of a GVL with types and initial values. `filter` is a case-insensitive wildcard (`*Fault*`, `x?Run`) or substring; with a filter the full declaration text is omitted. |
-| `dut_content` | `name` | Fields of a STRUCT/UNION DUT. |
-| `enum_content` | `name` | Values of an ENUM. |
-| `search_text` | `pattern`, `regex?`, `caseSensitive?`, `ignoreComments?`, `maxResults?` | One hit per matching line in all declarations and implementations: POU, member, section, line number and text. Graphical bodies (FBD/LD/CFC/SFC) are not searchable and are listed separately. |
+| `structure` | `library?` | Full project structure: applications, folders, POUs, GVLs, DUTs and ENUMs, plus `kind`. For a configured library, `libraryInfo` (title, version, company, default namespace, ...). |
+| `libraries` | – | Library references of the project, each with the `source` file it can be read from (or null). |
+| `pou_content` | `name`, `library?` | Declaration and implementation of a POU. Use `Parent.Member` for a method, action, property or transition (e.g. `FB_Motor.Reset`) and `Parent.Property.Get` for a property accessor. |
+| `gvl_content` | `name`, `filter?`, `library?` | Variables of a GVL with types and initial values. `filter` is a case-insensitive wildcard (`*Fault*`, `x?Run`) or substring; with a filter the full declaration text is omitted. |
+| `dut_content` | `name`, `library?` | Fields of a STRUCT/UNION DUT. |
+| `enum_content` | `name`, `library?` | Values of an ENUM. |
+| `search_text` | `pattern`, `regex?`, `caseSensitive?`, `ignoreComments?`, `maxResults?`, `library?` | One hit per matching line in all declarations and implementations: POU, member, section, line number and text. Graphical bodies (FBD/LD/CFC/SFC) are not searchable and are listed separately. |
 | `task_config` | – | Every task with kind, priority, interval, event, watchdog and the POUs it calls, in call order. |
 | `recipes` | `definition?`, `filter?`, `recipe?`, `offset?`, `maxVariables?`, `application?` | Without `definition`: every Recipe Manager with its settings and the variable count and recipe names of each recipe definition. With it: the definition's variables (expression, type, name, comment, min/max) with their value in every recipe (or only in `recipe`), paged — `maxVariables` per call (default 500, max 5000), continue with `offset` = the previous `nextOffset`; `filter` is a wildcard or substring on the expression or name. |
 
@@ -45,4 +48,4 @@ Python traceback).
 
 | Tool | Inputs | Effect |
 |---|---|---|
-| `compile` | `clean?`, `saveAfterCompile?` | Generates code for every application and returns the verdict. `messagesAvailable` tells whether the compiler message list could be read on this CODESYS version; `success` is always meaningful. |
+| `compile` | `clean?`, `saveAfterCompile?` | Generates code for every application and returns the verdict. A configured library has no application, so its objects are checked instead. `messagesAvailable` tells whether the compiler message list could be read on this CODESYS version; `success` is always meaningful. |

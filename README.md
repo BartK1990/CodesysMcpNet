@@ -199,6 +199,22 @@ resolve (not a full path to a global variable, or not compiled yet).
 The Recipe Manager itself has to exist: the scripting engine can add recipe definitions to
 it, but cannot add the manager to an application. Its settings are read-only here.
 
+### Library files as projects
+
+A source library (`.library`) can be configured wherever a `.project` can — as the default
+project or as an additional one — so a library is read **and edited** with the same tools as a
+project: `pou_create`, `pou_update`, `gvl_create`, `dut_create`, `enum_create`, `search_text`,
+... and `compile`. The settings page's picker lists both file types. Compiled libraries
+(`.compiled-library`, `.compiled-library-v3`) carry no source and are rejected.
+
+* `projects` (`GET /projects`) reports `kind`: `project` or `library`.
+* `structure` reports `kind` too and, for a library, `libraryInfo`: title, version, company,
+  default namespace, author, description, category and placeholder from its Project Information.
+* `compile` on a library checks its objects (*Build → Check all pool objects*), since a
+  library has no application to generate code for.
+* `task_config` and `recipes` return empty lists: libraries have no tasks or Recipe Managers.
+* The `project` argument accepts the file name with or without `.library`.
+
 ### Referenced libraries
 
 The code of a library lives in the library, not in the project, so the project tools never

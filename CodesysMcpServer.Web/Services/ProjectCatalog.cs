@@ -4,10 +4,14 @@ namespace CodesysMcpServer.Web.Services;
 
 /// <summary>A configured project, as returned by <c>GET /projects</c> and the <c>projects</c> tool.</summary>
 /// <param name="Name">File name without extension — what callers pass as <c>project</c>.</param>
-/// <param name="Path">Full path to the .project file.</param>
+/// <param name="Path">Full path to the .project or .library file.</param>
 /// <param name="IsDefault">Whether this is the project used when the caller names none.</param>
 /// <param name="Exists">Whether the file exists on this machine.</param>
-public sealed record CodesysProject(string Name, string Path, bool IsDefault, bool Exists);
+public sealed record CodesysProject(string Name, string Path, bool IsDefault, bool Exists)
+{
+    /// <summary><c>project</c> for a .project file, <c>library</c> for a source .library.</summary>
+    public string Kind => ProjectCatalog.KindOf(Path);
+}
 
 /// <summary>
 /// The projects callers may act on: the default <see cref="CodesysOptions.ProjectPath"/> plus,
@@ -25,6 +29,40 @@ public sealed class ProjectCatalog
     public ProjectCatalog(IOptionsMonitor<CodesysOptions> options)
     {
         _options = options;
+    }
+
+    /// <summary>Extensions of the files that can be configured: a project or a source library.</summary>
+    public static readonly string[] SupportedExtensions = [".project", ".library"];
+
+    /// <summary>
+    /// Compiled libraries carry no source, so they cannot be opened for editing. Checked before
+    /// <see cref="SupportedExtensions"/>, as ".compiled-library" also ends in "library".
+    /// </summary>
+    private static readonly string[] CompiledLibraryExtensions = [".compiled-library", ".compiled-library-v3"];
+
+    /// <summary><c>library</c> for a .library file, <c>project</c> otherwise.</summary>
+    public static string KindOf(string path) =>
+        path.Trim().EndsWith(".library", StringComparison.OrdinalIgnoreCase) ? "library" : "project";
+
+    /// <summary>
+    /// Throws unless <paramref name="path"/> names a file CODESYS can open as the primary project:
+    /// a <c>.project</c> or a source <c>.library</c>.
+    /// </summary>
+    public static void ValidateExtension(string path)
+    {
+        var trimmed = path.Trim();
+
+        if (CompiledLibraryExtensions.Any(e => trimmed.EndsWith(e, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new CodesysValidationException(
+                $"A compiled library carries no source and cannot be opened: {trimmed}. Use its source .library file.");
+        }
+
+        if (!SupportedExtensions.Any(e => trimmed.EndsWith(e, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new CodesysValidationException(
+                $"Not a CODESYS project or library: {trimmed}. Expected a .project or .library file.");
+        }
     }
 
     /// <summary>Configured projects, default first, without duplicates.</summary>
@@ -59,7 +97,7 @@ public sealed class ProjectCatalog
     /// <summary>
     /// Picks the project a request acts on: the default one when <paramref name="project"/> is
     /// empty, otherwise the configured project with that full path or name (file name, with or
-    /// without <c>.project</c>, case-insensitive).
+    /// without its <c>.project</c> / <c>.library</c> extension, case-insensitive).
     /// </summary>
     public CodesysProject Resolve(string? project)
     {
@@ -82,7 +120,8 @@ public sealed class ProjectCatalog
 
         var byName = projects
             .Where(p => string.Equals(p.Name, wanted, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(p.Name + ".project", wanted, StringComparison.OrdinalIgnoreCase))
+                        SupportedExtensions.Any(e =>
+                            string.Equals(p.Name + e, wanted, StringComparison.OrdinalIgnoreCase)))
             .ToList();
 
         if (byName.Count == 1)
