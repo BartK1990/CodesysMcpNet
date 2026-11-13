@@ -181,6 +181,31 @@ public sealed class CodesysOperations
     public Task<JsonElement> GetTaskConfigurationAsync(string? project, CancellationToken ct) =>
         RunAsync("task_config.py", project, projectPath => new { projectPath }, ct);
 
+    /// <summary>Adds, changes or removes the handler of one System Event, then saves the project.</summary>
+    public Task<JsonElement> UpdateSystemEventAsync(SystemEventUpdateRequest request, string? project, CancellationToken ct)
+    {
+        RequestValidator.Validate(request);
+
+        if (request.Remove && (!string.IsNullOrWhiteSpace(request.Function) || request.Active is not null))
+            throw new CodesysValidationException("remove cannot be combined with function or active.");
+
+        return RunAsync(
+            "system_event_update.py",
+            project,
+            projectPath => new
+            {
+                projectPath,
+                @event = request.Event.Trim(),
+                function = Blank(request.Function),
+                active = request.Active,
+                remove = request.Remove,
+                createFunction = request.CreateFunction,
+                parentPath = Blank(request.ParentPath),
+                application = Blank(request.Application),
+            },
+            ct);
+    }
+
     public const int MaxSearchResults = 5000;
 
     public Task<JsonElement> SearchTextAsync(

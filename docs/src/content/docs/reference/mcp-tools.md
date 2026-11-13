@@ -30,7 +30,7 @@ Python traceback).
 | `dut_content` | `name`, `library?` | Fields of a STRUCT/UNION DUT. |
 | `enum_content` | `name`, `library?` | Values of an ENUM. |
 | `search_text` | `pattern`, `regex?`, `caseSensitive?`, `ignoreComments?`, `maxResults?`, `library?` | One hit per matching line in all declarations and implementations: POU, member, section, line number and text. Graphical bodies (FBD/LD/CFC/SFC) are not searchable and are listed separately. |
-| `task_config` | – | Every task with kind, priority, interval, event, watchdog and the POUs it calls, in call order. |
+| `task_config` | – | Every task with kind, priority, interval, event, watchdog and the POUs it calls, in call order. `duplicatePous` lists POUs a task calls more than once. Per task configuration also `systemEvents` (configured System Event handlers) and `availableSystemEvents` (the events the target offers). |
 | `recipes` | `definition?`, `filter?`, `recipe?`, `offset?`, `maxVariables?`, `application?` | Without `definition`: every Recipe Manager with its settings and the variable count and recipe names of each recipe definition. With it: the definition's variables (expression, type, name, comment, min/max) with their value in every recipe (or only in `recipe`), paged — `maxVariables` per call (default 500, max 5000), continue with `offset` = the previous `nextOffset`; `filter` is a wildcard or substring on the expression or name. |
 
 ## Write
@@ -42,6 +42,7 @@ Python traceback).
 | `gvl_create` | `name`, `parentPath?`, `variables?` | Creates a global variable list. |
 | `dut_create` | `name`, `fields`, `baseType?`, `parentPath?` | Creates a STRUCT. |
 | `enum_create` | `name`, `values` (e.g. `["Idle := 3", "Busy"]`), `baseType?`, `parentPath?` | Creates an ENUM. |
+| `system_event_update` | `event`, `function?`, `active?`, `remove?`, `createFunction?` (default true), `parentPath?`, `application?` | Adds, changes or removes the handler of one System Event and saves the project. A missing function is created with the event's interface; the target's event libraries are referenced when missing. See [System Events](/guides/system-events/). |
 | `recipe_update` | `definition`, `application?`, `create?`, `variables?` (`[{variable, name?, comment?, minValue?, maxValue?}]`), `removeVariables?`, `recipes?` (`[{name, values?: {variable: value}}]`), `removeRecipes?` | Changes one recipe definition and saves the project: removes recipes and variables, adds or updates variables, creates recipes or sets their values. With `create`, a missing definition is created in the application's Recipe Manager (which must exist). All names are checked before anything changes; values outside min/max and unresolved variable types come back as `warnings`. |
 
 ## Build

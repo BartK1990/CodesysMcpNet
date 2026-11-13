@@ -421,6 +421,12 @@ app.MapPost("/recipes/update", (RecipeUpdateRequest request, string? project, Ca
     .WithTags("Update")
     .WithSummary("Add/update/remove variables and create/update/remove recipes of a recipe definition.");
 
+app.MapPost("/tasks/system-events", (SystemEventUpdateRequest request, string? project, CancellationToken ct) =>
+        RunAsync(ct2 => ops.UpdateSystemEventAsync(request, project, ct2), ct))
+    .WithName("UpdateSystemEvent")
+    .WithTags("Update")
+    .WithSummary("Add, change or remove the handler function of a System Event (Task Configuration > System Events).");
+
 // 5. Compile -----------------------------------------------------------------
 app.MapPost("/compile", (CompileRequest request, string? project, CancellationToken ct) =>
         RunAsync(ct2 => ops.CompileAsync(request, project, ct2), ct))

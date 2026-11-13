@@ -86,7 +86,7 @@ public sealed class CodesysTools
         Run(() => _ops.SearchTextAsync(pattern, regex, caseSensitive, ignoreComments, maxResults, project, library, ct));
 
     [McpServerTool(Name = "task_config")]
-    [Description("Task configuration of every application: per task its kind (Cyclic/Event/Status/Freewheeling/External), priority, interval (also normalized to ms), event variable or external event, watchdog, and the POUs it calls, in call order. Only the POUs attached directly to the task are listed, not what they call in turn. Acts on the default project unless project names another configured one.")]
+    [Description("Task configuration of every application: per task its kind (Cyclic/Event/Status/Freewheeling/External), priority, interval (also normalized to ms), event variable or external event, watchdog, and the POUs it calls, in call order; duplicatePous lists POUs the task calls more than once (each call runs the POU again in the same cycle). Per task configuration also systemEvents (configured System Event handlers: event, function, active, parameterType) and availableSystemEvents (the events the target offers; set handlers with system_event_update). Only the POUs attached directly to the task are listed, not what they call in turn. Acts on the default project unless project names another configured one.")]
     public Task<JsonElement> TaskConfigAsync(
         [Description(ProjectDescription)] string? project = null,
         CancellationToken ct = default) =>
@@ -138,6 +138,14 @@ public sealed class CodesysTools
         [Description(ProjectDescription)] string? project = null,
         CancellationToken ct = default) =>
         Run(() => _ops.UpdatePouAsync(request, project, ct));
+
+    [McpServerTool(Name = "system_event_update")]
+    [Description("Add, change or remove the handler of a System Event (Task Configuration > System Events: PrepareStart, StopDone, Exception, ...), then save the project. Works like the IDE's Add Event Handler: the event must be one the target offers (task_config lists them as availableSystemEvents); a missing function is created with the interface the IDE generates (FUNCTION <name> : DWORD, VAR_IN_OUT EventPrm: <event parameter struct>) unless createFunction is false; the libraries the target needs for System Events are referenced when missing. An event that already has a handler is changed (new function and/or active), not duplicated. With remove, the handler is removed and the function kept. Acts on the default project unless project names another configured one.")]
+    public Task<JsonElement> SystemEventUpdateAsync(
+        SystemEventUpdateRequest request,
+        [Description(ProjectDescription)] string? project = null,
+        CancellationToken ct = default) =>
+        Run(() => _ops.UpdateSystemEventAsync(request, project, ct));
 
     [McpServerTool(Name = "pou_create")]
     [Description("Create a new POU (PRG, FB or FUN).")]

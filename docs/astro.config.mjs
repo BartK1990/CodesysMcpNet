@@ -36,6 +36,7 @@ export default defineConfig({
             'guides/persistent-session',
             'guides/multiple-projects',
             'guides/libraries',
+            'guides/system-events',
             'guides/windows-service',
           ],
         },

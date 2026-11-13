@@ -68,6 +68,7 @@ setup): <https://bartk1990.github.io/CodesysMcpNet/>
     enum_read.py  enum_create.py
     search_text.py  task_config.py
     recipes_read.py recipe_update.py
+    system_event_update.py
 ```
 
 ## Settings page
@@ -117,7 +118,8 @@ Every operation below acts on the default project configured on the
 | GET  | `/dut/content`   | `name` |
 | GET  | `/enum/content`  | `name` |
 | GET  | `/search`        | `pattern`, `regex?`, `caseSensitive?`, `ignoreComments?`, `maxResults?` (default 200, max 5000) |
-| GET  | `/tasks`         | – (kind, priority, interval, event trigger, watchdog and called POUs per task) |
+| GET  | `/tasks`         | – (kind, priority, interval, event trigger, watchdog and called POUs per task; `duplicatePous` flags POUs a task calls twice; `systemEvents` and `availableSystemEvents` per task configuration) |
+| POST | `/tasks/system-events` | `{ event, function?, active?, remove?, createFunction? (default true), parentPath?, application? }` |
 | GET  | `/recipes`       | `definition?`, `application?`, `filter?`, `recipe?`, `offset?`, `maxVariables?` (default 500, max 5000) — Recipe Managers, or one definition's variables and values (see [Recipe Manager](#recipe-manager)) |
 | POST | `/pou/update`    | `{ pouName, newCode, newDeclaration? }` |
 | POST | `/recipes/update` | `{ definition, application?, create?, variables?: [{variable,name?,comment?,minValue?,maxValue?}], removeVariables?, recipes?: [{name,values?}], removeRecipes? }` |
@@ -162,6 +164,7 @@ REST routes:
 | `enum_content` | `GET /enum/content` |
 | `search_text` | `GET /search` |
 | `task_config` | `GET /tasks` |
+| `system_event_update` | `POST /tasks/system-events` |
 | `recipes` | `GET /recipes` |
 | `recipe_update` | `POST /recipes/update` |
 | `pou_update` | `POST /pou/update` |
@@ -198,6 +201,31 @@ resolve (not a full path to a global variable, or not compiled yet).
 
 The Recipe Manager itself has to exist: the scripting engine can add recipe definitions to
 it, but cannot add the manager to an application. Its settings are read-only here.
+
+### System Events
+
+`task_config` also returns, per task configuration, `systemEvents` (the configured handlers
+under *Task Configuration → System Events*: event, function, active, parameter type) and
+`availableSystemEvents` (the events the target's device description offers, such as
+`PrepareStart`, `StopDone`, `Exception`).
+
+`system_event_update` (`POST /tasks/system-events`) adds, changes or removes the handler of one
+event and saves the project, the way the IDE's *Add Event Handler* does:
+
+* the event must be one the target offers;
+* a missing function is created (unless `createFunction: false`) with the interface the IDE
+  generates, `FUNCTION <name> : DWORD` with `VAR_IN_OUT EventPrm: <event parameter struct>;`, in
+  the application or in `parentPath`; an existing function must be a FUNCTION, and one that does
+  not declare the event parameter is reported in `warnings`;
+* the libraries the target needs for System Events (CmpApp, CmpIecTask, CmpEventMgr, ...) are
+  referenced when missing (`librariesAdded`);
+* an event that already has a handler is changed, not added twice: a new `function` and/or
+  `active`. `remove: true` removes the handler and keeps the function.
+
+The Scripting Engine has no API for System Events, so this goes through the task
+configuration's internal object model (the same calls the IDE's editor makes). It was verified
+against CODESYS 3.5 SP21 Patch 3; on a version without that model the call fails and
+`task_config` reports `systemEventsError` instead of the lists.
 
 ### Library files as projects
 

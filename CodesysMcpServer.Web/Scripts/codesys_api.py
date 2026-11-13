@@ -1904,13 +1904,138 @@ class Project(object):
             for child in _children(obj):
                 if object_type(child) == TYPE_TASK or _flag(child, "is_task"):
                     tasks.append(_task_info(child, path + u"/" + object_name(child)))
-            configurations.append({
+            configuration = {
                 "path": path,
                 "application": path.rsplit(u"/", 1)[0] if u"/" in path else u"",
                 "taskCount": len(tasks),
                 "tasks": tasks,
-            })
+                "systemEvents": None,
+                "availableSystemEvents": None,
+            }
+            try:
+                events = SystemEvents(self, obj, path)
+                configuration["systemEvents"] = events.Configured()
+                configuration["availableSystemEvents"] = events.Available()
+            except Exception as ex:
+                configuration["systemEventsError"] = mcp_io._describe(ex)
+                log("Could not read the System Events of '%s': %s" % (path, configuration["systemEventsError"]))
+            configurations.append(configuration)
         return {"projectPath": self.Path, "taskConfigurations": configurations}
+
+    def FindTaskConfiguration(self, application=None):
+        """(script object, path) of the task configuration of the given (or the only) application."""
+        self._scan()
+        found = self._task_configurations
+        if application:
+            found = [(obj, path) for obj, path in found
+                     if _same_name(path.rsplit(u"/", 1)[0], application)
+                     or _same_name(path.rsplit(u"/", 1)[0].rsplit(u"/", 1)[-1], application)]
+        if len(found) == 1:
+            return found[0]
+        listed = u", ".join(path for _, path in self._task_configurations) or u"<none>"
+        if not found:
+            raise LookupError(
+                ("No Task Configuration in application '" + application + "'. " if application
+                 else "The project has no Task Configuration. ") + "Task Configurations: " + listed)
+        raise ValueError("The project has several Task Configurations (" + listed + "). Pass the application.")
+
+    def UpdateSystemEvent(self, event, function=None, active=None, remove=False,
+                          create_function=True, parent_path=None, application=None):
+        """
+        Adds, changes or removes the handler of one System Event (Task Configuration > System
+        Events), the way the IDE's "Add Event Handler" does: the event libraries the target asks
+        for are referenced, a missing handler function is created with the event's interface
+        (VAR_IN_OUT EventPrm: <parameter struct>), and the event is bound to it.
+        """
+        obj, path = self.FindTaskConfiguration(application)
+        application_path = path.rsplit(u"/", 1)[0] if u"/" in path else u""
+        events = SystemEvents(self, obj, path)
+        template = events.FindAvailable(event)
+        existing = events.FindConfigured(template.Eventname)
+        warnings = []
+        result = {
+            "application": application_path,
+            "event": template.Eventname,
+            "action": None,
+            "functionCreated": False,
+            "librariesAdded": [],
+            "warnings": warnings,
+        }
+
+        if remove:
+            if existing is None:
+                raise LookupError("System Event '" + template.Eventname + "' has no handler to remove. Configured: "
+                                  + (u", ".join(e["event"] for e in events.Configured()) or u"<none>"))
+            events.Modify(lambda handlers: _remove_event(handlers, template.Eventname))
+            result["action"] = "removed"
+            result["systemEvents"] = events.Configured()
+            return result
+
+        function = (function or (existing.FunctionToCallName if existing is not None else u"") or u"").strip()
+        if not function:
+            raise ValueError("Pass the function the System Event '" + template.Eventname + "' calls.")
+        if not _IDENTIFIER_RE.match(function):
+            raise ValueError("'" + function + "' is not a valid IEC identifier.")
+
+        parameter_type = template.ParameterStruct
+        pou = self.Find(self.Pous, function)
+        if pou is None:
+            if not create_function:
+                raise LookupError("Function '" + function + "' does not exist. Pass createFunction to create it.")
+            parent = parent_path or application_path
+            log("Creating event handler function '%s' in '%s'" % (function, parent or "<project>"))
+            created = self.CreatePou(function, "FUN", "ST", "DWORD", parent)
+            created.SetText(declaration=_event_function_declaration(function, parameter_type))
+            result["functionCreated"] = True
+        else:
+            if pou.Type != "FUN":
+                raise ValueError("'" + pou.Path + "' is a " + str(pou.Type) + "; a System Event calls a FUNCTION.")
+            if parameter_type and parameter_type.lower() not in pou.GetDeclaration().lower():
+                warnings.append(
+                    "Function '%s' does not declare the event parameter. The IDE generates "
+                    "'VAR_IN_OUT EventPrm: %s; END_VAR'." % (function, parameter_type))
+
+        result["librariesAdded"] = self._ensure_event_libraries(events.Libraries(), application_path, warnings)
+
+        def apply(handlers):
+            current = _find_event(handlers, template.Eventname)
+            if current is None:
+                current = template.Clone()
+                current.Active = True
+                handlers.Add(current)
+            current.FunctionToCallName = function
+            if active is not None:
+                current.Active = bool(active)
+
+        events.Modify(apply)
+        result["action"] = "updated" if existing is not None else "added"
+        result["systemEvents"] = events.Configured()
+        return result
+
+    def _ensure_event_libraries(self, libraries, application_path, warnings):
+        """References the libraries the target needs for System Events; returns those added."""
+        referenced = set()
+        for info in self.LibraryReferences()["libraries"]:
+            referenced.update(_library_aliases(info))
+        manager = None
+        for scope, candidate in self.LibraryManagers():
+            if scope and _same_name(scope, application_path):
+                manager = candidate
+        added = []
+        for library in libraries:
+            title = library.split(u",")[0].strip()
+            if title.lower() in referenced or title.replace(u" ", u"_").lower() in referenced:
+                continue
+            if manager is None:
+                warnings.append("Library '%s' is needed for System Events but no library manager was found." % library)
+                continue
+            try:
+                manager.add_library(library)
+                added.append(library)
+                log("Added library '%s'" % library)
+            except Exception as ex:
+                warnings.append("Could not add library '%s': %s" % (library, mcp_io._describe(ex)))
+        return added
 
     # -- libraries -------------------------------------------------------
     def LibraryManagers(self):
@@ -2362,6 +2487,120 @@ def _search_section(regex, text, ignore_comments, max_results, matches, where):
     return True
 
 
+# ---------------------------------------------------------------------------
+# System Events (Task Configuration > System Events)
+# ---------------------------------------------------------------------------
+#
+# The Scripting Engine has no API for System Events. The task configuration's internal object
+# (TaskConfigObject.plugin, ITaskConfigObject4.SystemEventList) has, and is reached through the
+# plugin's object manager - the same calls the IDE's System Events editor makes. The events a
+# target offers come from its device description (ITargetTaskInfo6.SystemEventList).
+
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _event_function_declaration(name, parameter_type):
+    """The interface the IDE generates for a System Event handler."""
+    lines = [u"FUNCTION " + name + u" : DWORD"]
+    if parameter_type:
+        lines += [u"VAR_IN_OUT", u"\tEventPrm: " + parameter_type + u";", u"END_VAR"]
+    return u"\n".join(lines) + u"\n"
+
+
+def _find_event(handlers, name):
+    for handler in handlers:
+        if (handler.Eventname or u"").lower() == (name or u"").lower():
+            return handler
+    return None
+
+
+def _remove_event(handlers, name):
+    handler = _find_event(handlers, name)
+    if handler is not None:
+        handlers.Remove(handler)
+
+
+def _event_info(event, configured):
+    info = {
+        "event": event.Eventname,
+        "description": _squash(event.Description or u"") or None,
+        "parameterType": event.ParameterStruct or None,
+    }
+    if configured:
+        info["function"] = event.FunctionToCallName or None
+        info["active"] = bool(event.Active)
+    return info
+
+
+class SystemEvents(object):
+    """The System Events of one task configuration, through the TaskConfig plugin's object model."""
+
+    def __init__(self, project, script_object, path):
+        import System
+        from System.Reflection import BindingFlags
+
+        assemblies = dict((a.GetName().Name, a) for a in System.AppDomain.CurrentDomain.GetAssemblies())
+        plugin = assemblies.get("TaskConfigObject.plugin")
+        contracts = assemblies.get("TaskConfig")
+        if plugin is None or contracts is None:
+            raise RuntimeError("This CODESYS version has no TaskConfig plugin; System Events are not available.")
+        environment = plugin.GetType("_3S.CoDeSys.TaskConfigObject.APEnvironment")
+        static = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static
+        self._manager = environment.GetProperty("ObjectMgr", static).GetValue(None, None)
+        self._target_info_type = contracts.GetType("_3S.CoDeSys.TaskConfig.ITargetTaskInfo6")
+        self._project_handle = project.Object.handle
+        self._guid = script_object.guid
+        self.Path = path
+
+    def _read(self):
+        return self._manager.GetObjectToRead(self._project_handle, self._guid).Object
+
+    def _target(self, name):
+        info = self._read().GetITargetTaskInfo()
+        if info is None or self._target_info_type is None:
+            return []
+        return list(self._target_info_type.GetProperty(name).GetValue(info, None) or [])
+
+    def Configured(self):
+        return [_event_info(e, True) for e in self._read().SystemEventList]
+
+    def Available(self):
+        return [_event_info(e, False) for e in sorted(self._target("SystemEventList"), key=lambda e: e.Eventname)]
+
+    def Libraries(self):
+        return [str(name) for name in self._target("SystemEventLibraries")]
+
+    def FindAvailable(self, name):
+        available = self._target("SystemEventList")
+        found = _find_event(available, (name or u"").strip())
+        if found is None:
+            raise LookupError("The target has no System Event '" + str(name) + "'. Available: "
+                              + (u", ".join(sorted(e.Eventname for e in available)) or u"<none>"))
+        return found
+
+    def FindConfigured(self, name):
+        return _find_event(self._read().SystemEventList, name)
+
+    def Modify(self, change):
+        """Runs change(list of handlers) on a writable copy and stores it, numbering the positions."""
+        meta = self._manager.GetObjectToModify(self._project_handle, self._guid)
+        stored = False
+        try:
+            handlers = meta.Object.SystemEventList
+            change(handlers)
+            for index in range(handlers.Count):
+                handlers[index].Position = index
+            meta.Object.SystemEventList = handlers
+            self._manager.SetObject(meta, True, None)
+            stored = True
+        finally:
+            if not stored:
+                try:
+                    self._manager.SetObject(meta, False, None)
+                except Exception:
+                    pass
+
+
 # ===========================================================================
 # Task configuration helpers
 # ===========================================================================
@@ -2420,7 +2659,24 @@ def _task_info(task, path):
         "trigger": _task_trigger(kind, interval_ms, interval, unit, event, external_event),
         "watchdog": watchdog,
         "pous": pous,
+        "duplicatePous": _duplicates(pous),
     }
+
+
+def _duplicates(names):
+    """Names that occur more than once (case-insensitive), in first-seen order.
+
+    A task that calls the same program twice runs it twice per cycle; that is almost
+    always a script that re-added calls (task.pous.remove() is a no-op on some engines).
+    """
+    first, counts, duplicates = {}, {}, []
+    for name in names:
+        key = name.lower()
+        first.setdefault(key, name)
+        counts[key] = counts.get(key, 0) + 1
+        if counts[key] == 2:
+            duplicates.append(first[key])
+    return duplicates
 
 
 _DURATION_PART_RE = re.compile(r"(\d+(?:\.\d+)?)(ms|us|ns|d|h|m|s)")

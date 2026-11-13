@@ -30,6 +30,9 @@ def handler(request):
     result = project.TaskConfiguration()
     for configuration in result["taskConfigurations"]:
         log("Task configuration '%s': %d task(s)" % (configuration["path"], configuration["taskCount"]))
+        for task in configuration["tasks"]:
+            if task["duplicatePous"]:
+                log("Task '%s' calls %s more than once" % (task["name"], u", ".join(task["duplicatePous"])))
 
     return result
 
