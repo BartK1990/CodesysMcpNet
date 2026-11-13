@@ -204,6 +204,12 @@ def test_interval():
     check("empty", api._interval_ms(None, u"ms"), None)
 
 
+def test_duplicates():
+    print("Duplicate task calls")
+    check("none", api._duplicates([u"A", u"B"]), [])
+    check("twice", api._duplicates([u"A", u"B", u"a", u"A"]), [u"A"])
+
+
 def test_libraries():
     import shutil
     import tempfile
@@ -294,7 +300,7 @@ def test_message_position():
 
 def main():
     for test in (test_gvl, test_struct, test_enum, test_alias, test_pou_kind, test_round_trips,
-                 test_name_filter, test_search, test_interval, test_libraries, test_recipes,
+                 test_name_filter, test_search, test_interval, test_duplicates, test_libraries, test_recipes,
                  test_message_position):
         test()
 
