@@ -422,20 +422,30 @@ or, for a project-scoped, team-shared entry, add it to `.mcp.json` at the repo r
 }
 ```
 
-**OpenCode** (`opencode.json` / `opencode.jsonc`):
+**OpenCode** — merge this into `~/.config/opencode/opencode.json` (on Windows
+`%USERPROFILE%\.config\opencode\opencode.json`; global, every project) or into `opencode.json` /
+`opencode.jsonc` at a project root. The entry goes under `mcp` → `servers`; keep any other keys
+and servers already in the file. Use `"type": "remote"` even though the server is local
+(`"local"` in OpenCode means a stdio process):
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "codesys": {
-      "type": "remote",
-      "url": "http://127.0.0.1:5088/mcp",
-      "enabled": true
+    "servers": {
+      "codesys": {
+        "type": "remote",
+        "url": "http://127.0.0.1:5088/mcp"
+      }
     }
   }
 }
 ```
+
+or `opencode mcp add codesys --global --url http://127.0.0.1:5088/mcp`. Check with
+`opencode mcp list`; `"disabled": true` switches the entry off. The older format (entries
+directly under `mcp`, `"enabled": false`) still works. Details:
+[MCP clients guide](https://bartk1990.github.io/CodesysMcpNet/guides/mcp-clients/#opencode).
 
 Both clients will then list `structure`, `pou_content`, `pou_update`, `compile`, … as
 ordinary tools (see [MCP tools](#mcp-tools)). The server must already be running — start

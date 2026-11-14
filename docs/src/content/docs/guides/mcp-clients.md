@@ -103,41 +103,91 @@ claude
 
 ## OpenCode
 
-OpenCode also connects to the HTTP endpoint directly, as a **remote** MCP server.
+OpenCode connects to the HTTP endpoint directly. Although the server runs on your own machine,
+configure it as a **remote** MCP server (`"type": "remote"`): in OpenCode, `"local"` means a
+process that OpenCode starts itself and talks to over stdio, which is not how this server works.
+
+The server must run on the same Windows host as OpenCode (it listens on `127.0.0.1` only).
 
 1. Add the server to an OpenCode config file:
 
    - **Global** (every project): `~/.config/opencode/opencode.json`
-     (on Windows `%USERPROFILE%\.config\opencode\opencode.json`)
+     (on Windows `%USERPROFILE%\.config\opencode\opencode.json`, e.g.
+     `C:\Users\<you>\.config\opencode\opencode.json`)
    - **Per project**: `opencode.json` or `opencode.jsonc` at the root of the project
+
+   The entry goes under the top-level `mcp` key, inside its `servers` object, named `codesys`:
 
    ```jsonc
    {
      "$schema": "https://opencode.ai/config.json",
      "mcp": {
-       "codesys": {
-         "type": "remote",
-         "url": "http://127.0.0.1:5088/mcp",
-         "enabled": true
+       "servers": {
+         "codesys": {
+           "type": "remote",
+           "url": "http://127.0.0.1:5088/mcp"
+         }
        }
      }
    }
    ```
 
-   If the file already exists, merge the `codesys` entry into its existing `mcp` section.
-   Alternatively run `opencode mcp add` and answer the prompts (name `codesys`, type
-   *remote*, URL `http://127.0.0.1:5088/mcp`).
+   If the file already exists, do not replace it: merge the entry in. Keep your other
+   top-level keys as they are, add `"mcp"` if it is missing, add `"servers"` inside it if it is
+   missing, and put `"codesys"` next to any servers already listed there:
 
-2. Check that it is registered:
+   ```jsonc
+   {
+     "$schema": "https://opencode.ai/config.json",
+     "model": "…",                     // your existing settings stay untouched
+     "mcp": {
+       "servers": {
+         "some-other-server": { … },   // existing servers stay as they are
+         "codesys": {                  // ← add this entry
+           "type": "remote",
+           "url": "http://127.0.0.1:5088/mcp"
+         }
+       }
+     }
+   }
+   ```
+
+   Alternatively, add it from the command line without editing the file:
+
+   ```bash
+   opencode mcp add codesys --global --url http://127.0.0.1:5088/mcp
+   ```
+
+   Leave out `--global` to add it to the current project's config instead.
+
+2. Check that it is connected (the server must already be running):
 
    ```bash
    opencode mcp list
    ```
 
+   `codesys` should be listed as *connected*. OpenCode reloads its configuration when the file
+   changes, so a restart is not needed after editing it.
+
 3. Start `opencode` in your project folder and ask, for example: *"Use the codesys tools to
    compile the project"*. The tools appear prefixed with the server name (`codesys_…`).
 
-To switch the server off temporarily without deleting the entry, set `"enabled": false`.
+To switch the server off temporarily without deleting the entry, add `"disabled": true` to it.
+
+:::note[Older OpenCode config format]
+Earlier OpenCode versions put server entries directly under `mcp` (no `servers` object) and
+used `"enabled": false` to switch one off:
+
+```jsonc
+{
+  "mcp": {
+    "codesys": { "type": "remote", "url": "http://127.0.0.1:5088/mcp", "enabled": true }
+  }
+}
+```
+
+OpenCode still reads this format for compatibility, but use `mcp.servers` for new configs.
+:::
 
 ## Claude Desktop (chat) and other stdio-only clients
 
