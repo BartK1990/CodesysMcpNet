@@ -35,4 +35,4 @@ Change `Kestrel:Endpoints:Http:Url` in `appsettings.json` (see
 ### The `win-x64` package doesn't start
 
 It needs the [ASP.NET Core 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0).
-Install it, or use the **self-contained** or **portable** package instead.
+Install it, or use the **portable** package instead.
