@@ -17,9 +17,6 @@ Publish the same packages the release workflow builds:
 # x64 (framework-dependent)
 dotnet publish CodesysMcpServer.Web -c Release -r win-x64 --self-contained false -o publish/x64
 
-# self-contained (runtime included, folder layout)
-dotnet publish CodesysMcpServer.Web -c Release -r win-x64 --self-contained true -o publish/self-contained
-
 # portable (self-contained single file)
 dotnet publish CodesysMcpServer.Web -c Release -r win-x64 --self-contained true \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \

@@ -26,8 +26,8 @@ reads it to name the tag (`v1.0.0`) and the packages.
 3. The workflow, on `windows-latest`:
    - reads the version and fails if tag `v<version>` already exists (so a forgotten bump can't
      overwrite a release),
-   - publishes the **x64** (framework-dependent), **self-contained** (runtime included,
-     regular folder layout) and **portable** (self-contained, single-file) builds,
+   - publishes the **x64** (framework-dependent) and **portable** (self-contained,
+     single-file) builds,
    - zips them with `README.md` and `LICENSE.txt`, writes `SHA256SUMS.txt`,
    - creates the GitHub release `v<version>` with the zips attached and generated release
      notes.

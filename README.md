@@ -27,8 +27,7 @@ one of those by name (see [Multiple projects](#multiple-projects)).
 setup): <https://bartk1990.github.io/CodesysMcpNet/>
 
 ⬇️ **Download**: [latest release](https://github.com/BartK1990/CodesysMcpNet/releases/latest) —
-`win-x64` (needs the ASP.NET Core 10 runtime), `win-x64-self-contained` (includes the runtime, regular
-folder layout) or `win-x64-portable` (self-contained single file, unzip and run).
+`win-x64` (needs the ASP.NET Core 10 runtime) or `win-x64-portable` (self-contained, unzip and run).
 
 ## Layout
 
@@ -389,8 +388,7 @@ printed in the startup log.
 
 To release: bump `<Version>`, push, then run **Actions → Release → Run workflow**
 ([.github/workflows/release.yml](.github/workflows/release.yml)). It builds the `win-x64`
-(framework-dependent), `win-x64-self-contained` (self-contained, folder layout) and
-`win-x64-portable` (self-contained single file) zips and publishes
+(framework-dependent) and `win-x64-portable` (self-contained single file) zips and publishes
 them as GitHub release `v<Version>`. It refuses to run if that tag already exists.
 
 ## Documentation site

@@ -7,15 +7,14 @@ description: Download and start the CODESYS MCP Server on Windows.
 
 Grab the latest release from the
 [Releases page](https://github.com/BartK1990/CodesysMcpNet/releases/latest). Each release
-has three packages:
+has two packages:
 
 | Package | Size | Needs | Pick it when |
 |---|---|---|---|
 | `CodesysMcpServer-<version>-win-x64.zip` | ~3 MB | [ASP.NET Core 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) | .NET 10 is already installed, or you want security updates of the runtime through Windows Update. |
-| `CodesysMcpServer-<version>-win-x64-self-contained.zip` | ~45 MB | nothing | You can't install .NET, but prefer the regular folder layout (runtime DLLs next to the exe, no extraction on first start), e.g. when antivirus or locked-down temp folders get in the way of the single-file build. |
 | `CodesysMcpServer-<version>-win-x64-portable.zip` | ~50 MB | nothing | You want to unzip and run, e.g. on an engineering PC where you can't install software. |
 
-All packages contain the same application. `SHA256SUMS.txt` lists the checksums of the
+Both packages contain the same application. `SHA256SUMS.txt` lists the checksums of the
 zip files.
 
 ## Install
