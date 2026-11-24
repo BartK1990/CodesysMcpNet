@@ -1,9 +1,11 @@
-# Manual release: builds the Windows x64 and portable packages and publishes them as a
-# GitHub release tagged v<Version>, where <Version> is read from
+# Manual release: builds the Windows x64, self-contained and portable packages and publishes
+# them as a GitHub release tagged v<Version>, where <Version> is read from
 # CodesysMcpServer.Web/CodesysMcpServer.Web.csproj. Bump <Version> there before running.
 #
-#   x64      - framework-dependent win-x64 build; needs the ASP.NET Core 10 runtime installed.
-#   portable - self-contained single-file win-x64 build; unzip and run, nothing to install.
+#   x64            - framework-dependent win-x64 build; needs the ASP.NET Core 10 runtime installed.
+#   self-contained - self-contained win-x64 build in the regular folder layout (runtime DLLs
+#                    next to the exe); unzip and run, nothing to install.
+#   portable       - self-contained single-file win-x64 build; unzip and run, nothing to install.
 name: Release
 
 on:
@@ -68,6 +70,12 @@ jobs:
           -c Release -r win-x64 --self-contained false
           -o publish/x64
 
+      - name: Publish self-contained (folder layout)
+        run: >
+          dotnet publish ${{ env.PROJECT }}
+          -c Release -r win-x64 --self-contained true
+          -o publish/self-contained
+
       - name: Publish portable (self-contained, single file)
         run: >
           dotnet publish ${{ env.PROJECT }}
@@ -85,12 +93,14 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           $x64 = "dist/CodesysMcpServer-$env:VERSION-win-x64.zip"
+          $selfContained = "dist/CodesysMcpServer-$env:VERSION-win-x64-self-contained.zip"
           $portable = "dist/CodesysMcpServer-$env:VERSION-win-x64-portable.zip"
-          foreach ($dir in 'publish/x64', 'publish/portable') {
+          foreach ($dir in 'publish/x64', 'publish/self-contained', 'publish/portable') {
             Get-ChildItem $dir -Filter *.pdb | Remove-Item
             Copy-Item README.md, LICENSE.txt $dir
           }
           Compress-Archive -Path publish/x64/* -DestinationPath $x64
+          Compress-Archive -Path publish/self-contained/* -DestinationPath $selfContained
           Compress-Archive -Path publish/portable/* -DestinationPath $portable
           Get-ChildItem dist | ForEach-Object {
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
@@ -118,7 +128,8 @@ jobs:
           | Package | Requirements |
           |---|---|
           | ``CodesysMcpServer-$env:VERSION-win-x64.zip`` | Windows x64 with the [ASP.NET Core 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) installed |
-          | ``CodesysMcpServer-$env:VERSION-win-x64-portable.zip`` | Windows x64, nothing else — self-contained, unzip and run |
+          | ``CodesysMcpServer-$env:VERSION-win-x64-self-contained.zip`` | Windows x64, nothing else — self-contained, the .NET runtime ships as files next to the exe |
+          | ``CodesysMcpServer-$env:VERSION-win-x64-portable.zip`` | Windows x64, nothing else — self-contained single file, unzip and run |
 
           Unzip, run ``CodesysMcpServer.Web.exe`` and open http://127.0.0.1:5088/.
           See the [documentation](https://bartk1990.github.io/CodesysMcpNet/) for setup.
