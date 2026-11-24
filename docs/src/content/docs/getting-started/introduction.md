@@ -44,6 +44,6 @@ callers pick one of those by name.
 - CODESYS V3.5 (with the Scripting Engine, which is part of a standard installation).
 - For the `win-x64` package only: the
   [ASP.NET Core 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0). The
-  **portable** package needs nothing else.
+  **self-contained** and **portable** packages need nothing else.
 
 Next: [install the server](/CodesysMcpNet/getting-started/installation/).
